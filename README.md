@@ -75,8 +75,21 @@ Alternative Malta bus app (Android, Kotlin, no Google Play Services).
   produces the same file from it.
 - **Route colours**: taken from the API `color` field (same as the official app).
   There is a fallback palette only when that field is missing.
-- **Server** (`server/aggregator.py`): mTLS-verified ingest into JSONL. Fusion
-  with stops and schedules is TODO.
+- **Server** (`server/melamur_aggregator.py`): a WSGI app that receives the
+  app's uploads and stores each GPS fix in **MySQL** (table `fixes`). It reads
+  the Apache-verified client certificate from `SSL_CLIENT_*` and refuses
+  requests without one. Runs behind **Apache2 + mod_wsgi**
+  (`server/melamur-apache.conf`, with `server/melamur.wsgi` as entry point), and
+  standalone for testing:
+
+      pip install PyMySQL                       # once
+      python3 server/melamur_aggregator.py --init-db     # create the schema
+      sh server/test_aggregator.sh db           # HTTP, no cert, posts + reads back rows
+      sh server/test_aggregator.sh tls          # mutual TLS using server/certs
+
+  Config is via environment (`MELAMUR_DB_HOST/NAME/USER/PASS`,
+  `MELAMUR_REQUIRE_CLIENT_CERT`). The older `server/aggregator.py` (JSONL, no
+  DB) is kept as a minimal reference. Fusion with stops and schedules is TODO.
 - No persistent upload retry queue yet.
 
 ## Build
