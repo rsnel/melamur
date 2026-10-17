@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import it.snel.melamur.data.BusStop
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
@@ -31,6 +32,12 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     var stops: List<BusStop> = emptyList()
         set(v) { field = v; invalidate() }
     var routes: List<RouteGfx> = emptyList()
+        set(v) { field = v; invalidate() }
+    class PlaceLabel(val x: Float, val y: Float, val name: String, val rank: Int)
+    class StreetLabel(val x: Float, val y: Float, val x2: Float, val y2: Float, val name: String)
+    var places: List<PlaceLabel> = emptyList()
+        set(v) { field = v; invalidate() }
+    var streets: List<StreetLabel> = emptyList()
         set(v) { field = v; invalidate() }
     var activeRouteId: String? = null
     var nextStopId: String? = null
@@ -127,6 +134,15 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE; textSize = 12 * dp; setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
     }
+    private val placePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textAlign = Paint.Align.CENTER; setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val streetPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(225, 225, 225); textSize = 11 * dp; textAlign = Paint.Align.CENTER
+        setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val placeDot = fill(Color.WHITE)
+    private val occupied = HashSet<Long>() // label collision grid, rebuilt per frame
     private val meFill = fill(Color.WHITE)
     private val meRing = stroke(Color.rgb(225, 6, 0)).apply { strokeWidth = 4 * dp }
     private val meAcc = fill(Color.argb(50, 225, 6, 0))
@@ -172,6 +188,36 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 i += 3
             }
         }
+        // ---- text labels (screen space, collision-avoided)
+        occupied.clear()
+        if (scale > 3.5f) {
+            streetPaint.textSize = 11 * dp
+            for (s in streets) {
+                if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue
+                pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
+                val sx = pt[0]; val sy = pt[1]
+                if (sx < 0 || sx > width || sy < 0 || sy > height) continue
+                if (!reserve(sx, sy)) continue
+                pt[0] = s.x2; pt[1] = s.y2; matrix.mapPoints(pt)
+                var ang = Math.toDegrees(atan2((pt[1] - sy).toDouble(), (pt[0] - sx).toDouble())).toFloat()
+                if (ang > 90f || ang < -90f) ang += 180f
+                c.save(); c.translate(sx, sy); c.rotate(ang)
+                c.drawText(s.name, 0f, -2 * dp, streetPaint); c.restore()
+            }
+        }
+        for (p in places) {
+            val minS = PLACE_MIN_SCALE[p.rank]
+            if (scale < minS) continue
+            if (p.x < vx0 || p.x > vx1 || p.y < vy0 || p.y > vy1) continue
+            pt[0] = p.x; pt[1] = p.y; matrix.mapPoints(pt)
+            if (pt[0] < 0 || pt[0] > width || pt[1] < 0 || pt[1] > height) continue
+            if (!reserve(pt[0], pt[1])) continue
+            placePaint.textSize = PLACE_TEXT[p.rank] * dp
+            placePaint.isFakeBoldText = p.rank <= 1
+            if (p.rank <= 2) c.drawCircle(pt[0], pt[1], 2.5f * dp, placeDot)
+            c.drawText(p.name, pt[0], pt[1] - 5 * dp, placePaint)
+        }
+
         if (scale > MIN_STOP_SCALE) {
             val showLabels = scale > 3f
             for (s in stops) {
@@ -205,5 +251,16 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         c.restore()
     }
 
-    companion object { const val MIN_STOP_SCALE = 0.25f }
+    /** Claim a label slot on a coarse grid; false if the cell is already taken. */
+    private fun reserve(x: Float, y: Float): Boolean {
+        val gx = (x / (72 * dp)).toInt(); val gy = (y / (18 * dp)).toInt()
+        return occupied.add(gx.toLong() * 100000L + gy)
+    }
+
+    companion object {
+        const val MIN_STOP_SCALE = 0.25f
+        // indexed by place rank 0..4 (capital/city, town, village/suburb, hamlet, locality)
+        private val PLACE_MIN_SCALE = floatArrayOf(0f, 0.02f, 0.12f, 0.5f, 1.5f)
+        private val PLACE_TEXT = floatArrayOf(17f, 15f, 13f, 12f, 11f)
+    }
 }

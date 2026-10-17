@@ -198,7 +198,41 @@ def main(gpkg, outdir):
         stops.append(rec)
     with open(os.path.join(outdir, 'stops.json'), 'w') as f:
         json.dump(stops, f, ensure_ascii=False, separators=(',', ':'))
+
+    # ---- labels: place names + street names
+    PLACE_RANK = {'national_capital': 0, 'city': 0, 'town': 1, 'suburb': 2,
+                  'village': 2, 'hamlet': 3, 'locality': 4}
+    places = []
+    for (fc, name), r in geoms(c, "select geom,fclass,name from gis_osm_places_free where name is not null"):
+        if fc not in PLACE_RANK:
+            continue
+        lon, lat = r[0][0]
+        places.append({'n': name, 'r': PLACE_RANK[fc], 'lat': round(lat, 6), 'lon': round(lon, 6)})
+
+    # one street label per name per ~700 m cell, placed at a segment midpoint with
+    # a neighbour point so the app can rotate the text along the road
+    SC = 700.0
+    seen = set()
+    streets = []
+    for (name,), r in geoms(c, "select geom,name from gis_osm_roads_free where name is not null and name<>''"):
+        for ring in r:
+            if len(ring) < 2:
+                continue
+            m = len(ring) // 2
+            lon, lat = ring[m]
+            lon2, lat2 = ring[m - 1]
+            px, py = proj(lon, lat)
+            key = (name, int(px // SC), int(py // SC))
+            if key in seen:
+                continue
+            seen.add(key)
+            streets.append({'n': name, 'lat': round(lat, 6), 'lon': round(lon, 6),
+                            'lat2': round(lat2, 6), 'lon2': round(lon2, 6)})
+    with open(os.path.join(outdir, 'labels.json'), 'w') as f:
+        json.dump({'places': places, 'streets': streets}, f, ensure_ascii=False, separators=(',', ':'))
+
     print('features', len(LAYERS), 'stops', len(stops), 'moved to left kerb', moved,
+          'places', len(places), 'street labels', len(streets),
           'map.bin bytes', os.path.getsize(os.path.join(outdir, 'map.bin')))
 
 if __name__ == '__main__':

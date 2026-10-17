@@ -10,6 +10,9 @@ Alternative Malta bus app (Android, Kotlin, no Google Play Services).
 - **Centre on me**: the ◎ button enters follow mode. A pinch near the screen
   centre zooms around your position without losing it; panning or pinching
   elsewhere leaves follow mode.
+- **Street and place names** from the OSM extract (`assets/labels.json`): town
+  and village names scaled by importance, street names drawn along the road
+  when zoomed in, with simple collision avoidance so they don't overlap.
 - **GDPR consent** on first start (Privacy button to review or withdraw). Without
   consent the app is map-only.
 - **Bus detection**: a foreground service watches for the Wi-Fi network
@@ -49,11 +52,18 @@ Alternative Malta bus app (Android, Kotlin, no Google Play Services).
   no key the app runs fully offline on bundled data: OSM stops and an optional
   `assets/routes.json`. With no routes, next stop falls back to the nearest stop
   ahead on the left kerb of your direction.
-- **Bus lines from open data**: build `assets/routes.json` from the public Malta
-  GTFS feed (on the [Mobility Database](https://mobilitydatabase.org/), search
-  "Malta") with `python3 tools/build_routes_from_gtfs.py malta-gtfs.zip
-  app/src/main/assets/routes.json` — real shapes, colours and stop sequences,
-  no backend calls.
+- **Bus lines from open data** (no backend, no key). Malta has no published
+  static GTFS at the moment, so the temporary source is OpenStreetMap:
+
+      python3 tools/build_routes_from_osm.py            # fetch Malta from Overpass
+      # -> app/src/main/assets/routes.json (shapes, directions, stop ids, colours)
+
+  `build_routes_from_osm.py` reads OSM bus route relations via the Overpass API
+  (run it where you have internet; pass `--in saved.json` to parse a saved
+  Overpass response offline). If an official GTFS ever appears (e.g. on Malta's
+  [National Access Point](https://news.transport.gov.mt/data/)),
+  `tools/build_routes_from_gtfs.py malta-gtfs.zip app/src/main/assets/routes.json`
+  produces the same file from it.
 - **Route colours**: taken from the API `color` field (same as the official app).
   There is a fallback palette only when that field is missing.
 - **Server** (`server/aggregator.py`): mTLS-verified ingest into JSONL. Fusion

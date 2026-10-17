@@ -59,7 +59,11 @@ class MainActivity : Activity(), LocationListener {
             val stops = api.stops()
             val byId = stops.associateBy { it.id }
             val routes = api.routes().map { RouteRenderer.build(it, byId) }
-            runOnUiThread { map.data = data; map.stops = stops; map.routes = routes }
+            val (places, streets) = loadLabels()
+            runOnUiThread {
+                map.data = data; map.stops = stops; map.routes = routes
+                map.places = places; map.streets = streets
+            }
         }.start()
 
         if (!hasConsent && !prefs.getBoolean("declined", false)) showConsent(firstRun = true)
@@ -134,6 +138,25 @@ class MainActivity : Activity(), LocationListener {
             lm.requestLocationUpdates(pr, 2000L, 0f, this)
         }
     }
+
+    private fun loadLabels(): Pair<List<MapView.PlaceLabel>, List<MapView.StreetLabel>> = try {
+        val root = org.json.JSONObject(assets.open("labels.json").bufferedReader().use { it.readText() })
+        val pa = root.getJSONArray("places")
+        val places = List(pa.length()) { i ->
+            val o = pa.getJSONObject(i)
+            MapView.PlaceLabel(it.snel.melamur.map.Geo.x(o.getDouble("lon")),
+                it.snel.melamur.map.Geo.y(o.getDouble("lat")), o.getString("n"), o.getInt("r"))
+        }
+        val sa = root.getJSONArray("streets")
+        val streets = List(sa.length()) { i ->
+            val o = sa.getJSONObject(i)
+            MapView.StreetLabel(it.snel.melamur.map.Geo.x(o.getDouble("lon")),
+                it.snel.melamur.map.Geo.y(o.getDouble("lat")),
+                it.snel.melamur.map.Geo.x(o.getDouble("lon2")),
+                it.snel.melamur.map.Geo.y(o.getDouble("lat2")), o.getString("n"))
+        }
+        places to streets
+    } catch (e: Exception) { emptyList<MapView.PlaceLabel>() to emptyList() }
 
     override fun onLocationChanged(l: Location) =
         map.setMyLocation(l.latitude, l.longitude, l.accuracy, if (l.hasBearing() && l.speed > 2f) l.bearing else null)
