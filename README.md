@@ -39,13 +39,21 @@ Alternative Malta bus app (Android, Kotlin, no Google Play Services).
 
 ## Stubs / TODO
 
-- **Tallinja API** (`data/TallinjaApi.kt`): the uploaded APK was the Uptodown
-  installer wrapper, not the Tallinja app, so the real endpoints are not known
-  yet. The paths in the code are placeholders. Put the base URL and key in
-  `~/.gradle/gradle.properties` (`tallinjaBaseUrl`, `tallinjaApiKey`). Until
-  then the app uses the bundled OSM stops and an optional `assets/routes.json`
-  (format in `TallinjaApi.parseRoutes`). With no routes, next stop falls back
-  to the nearest stop ahead on the left kerb of your direction.
+- **Tallinja API** (`data/TallinjaApi.kt`): wired to the real backend — the
+  Meep MaaS layer over OpenTripPlanner (`api.meep.me`, zone `Malta`), with the
+  anonymous-JWT auth flow. The endpoint structure is documented in
+  [`docs/tallinja-api.md`](docs/tallinja-api.md). **No API key is committed.**
+  The official app's key is not reused; request your own (draft in
+  [`docs/tallinja-api-key-request.md`](docs/tallinja-api-key-request.md)) and
+  set it with `-PtallinjaApiKey=...` or in `~/.gradle/gradle.properties`. With
+  no key the app runs fully offline on bundled data: OSM stops and an optional
+  `assets/routes.json`. With no routes, next stop falls back to the nearest stop
+  ahead on the left kerb of your direction.
+- **Bus lines from open data**: build `assets/routes.json` from the public Malta
+  GTFS feed (on the [Mobility Database](https://mobilitydatabase.org/), search
+  "Malta") with `python3 tools/build_routes_from_gtfs.py malta-gtfs.zip
+  app/src/main/assets/routes.json` — real shapes, colours and stop sequences,
+  no backend calls.
 - **Route colours**: taken from the API `color` field (same as the official app).
   There is a fallback palette only when that field is missing.
 - **Server** (`server/aggregator.py`): mTLS-verified ingest into JSONL. Fusion

@@ -16,7 +16,9 @@ android {
         buildConfigField("String", "AGGREGATOR_URL", "\"https://melamur.snel.it/aggregator/\"")
         buildConfigField("String", "AGGREGATOR_PIN", "\"${project.findProperty("melamurPin") ?: ""}\"")
         buildConfigField("String", "CLIENT_P12_PASSWORD", "\"${project.findProperty("melamurP12Password") ?: "changeit"}\"")
-        buildConfigField("String", "TALLINJA_BASE_URL", "\"${project.findProperty("tallinjaBaseUrl") ?: ""}\"")
+        buildConfigField("String", "TALLINJA_BASE_URL", "\"${project.findProperty("tallinjaBaseUrl") ?: "https://api.meep.me"}\"")
+        buildConfigField("String", "TALLINJA_ZONE", "\"${project.findProperty("tallinjaZone") ?: "Malta"}\"")
+        // Your OWN application key from Malta Public Transport / Meep (see docs/). Empty => offline, bundled data only.
         buildConfigField("String", "TALLINJA_API_KEY", "\"${project.findProperty("tallinjaApiKey") ?: ""}\"")
     }
     buildFeatures { buildConfig = true }
