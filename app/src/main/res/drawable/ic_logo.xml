@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Red outline of a bus seen from the left (door) side: angular, single-deck,
+     two door openings on the left side. Deliberately unlike the round green
+     Tallinja mark. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="48" android:viewportHeight="48">
+    <!-- body -->
+    <path android:strokeColor="#E10600" android:strokeWidth="2.6" android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M4,13 L40,13 L44,19 L44,34 L4,34 Z" />
+    <!-- windscreen + windows -->
+    <path android:strokeColor="#E10600" android:strokeWidth="1.8" android:fillColor="#00000000"
+        android:pathData="M8,17 h7 v6 h-7 z M24,17 h7 v6 h-7 z M35,17 h4 l3,4 v2 h-7 z" />
+    <!-- doors (left side) -->
+    <path android:strokeColor="#E10600" android:strokeWidth="1.8" android:fillColor="#00000000"
+        android:pathData="M17,17 v15 M22,17 v15 M17,17 h5 M19.5,17 v15" />
+    <!-- wheels -->
+    <path android:strokeColor="#E10600" android:strokeWidth="2.4" android:fillColor="#0B0B0B"
+        android:pathData="M8,34 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 M31,34 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+</vector>

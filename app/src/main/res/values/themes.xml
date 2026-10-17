@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MelaMur" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">@color/mm_red</item>
+        <item name="android:colorPrimaryDark">@color/mm_black</item>
+        <item name="android:colorAccent">@color/mm_red</item>
+        <item name="android:statusBarColor">@color/mm_black</item>
+        <item name="android:navigationBarColor">@color/mm_black</item>
+        <item name="android:windowBackground">@color/mm_black</item>
+        <item name="android:textColorPrimary">@color/mm_white</item>
+        <item name="android:alertDialogTheme">@style/Theme.MelaMur.Dialog</item>
+    </style>
+    <style name="Theme.MelaMur.Dialog" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/mm_red</item>
+        <item name="android:background">@color/mm_black</item>
+    </style>
+    <style name="MmButton" parent="android:Widget.Material.Button">
+        <item name="android:backgroundTint">@color/mm_red</item>
+        <item name="android:textColor">@color/mm_white</item>
+    </style>
+</resources>

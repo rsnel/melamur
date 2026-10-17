@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MelaMur</string>
+    <string name="consent_title">Privacy &amp; location data</string>
+    <string name="consent_text">MelaMur shows a map of Malta and helps you while riding the bus.\n\nWhat we collect: only while your phone sees the on-board network \"Tallinja Wi-Fi\", MelaMur switches on GPS and sends your position, speed and heading, together with a random trip identifier, to melamur.snel.it. No name, account, phone number or advertising ID is collected. When you leave the bus, GPS is switched off and collection stops.\n\nWhy: the positions of all participating riders are combined with bus stop and timetable data to build a more accurate live bus map of Malta (legal basis: your consent, Art. 6(1)(a) GDPR).\n\nRetention: raw positions are kept at most 30 days, after which only anonymous aggregates remain.\n\nYour rights: you can withdraw consent at any time via the Privacy button; the map keeps working without it. You have the right to access, rectification, erasure and to lodge a complaint with the Information and Data Protection Commissioner (IDPC, Malta). Controller contact: privacy@snel.it.</string>
+    <string name="consent_accept">I agree</string>
+    <string name="consent_decline">No thanks (map only)</string>
+    <string name="consent_withdraw">Withdraw consent</string>
+    <string name="close">Close</string>
+    <string name="center">◎</string>
+    <string name="privacy">Privacy</string>
+    <string name="status_off">Bus tracking off (no consent)</string>
+    <string name="status_waiting">Waiting for “Tallinja Wi-Fi”…</string>
+    <string name="status_onboard">On board — GPS on</string>
+    <string name="press_stop">Press STOP now!</string>
+    <string name="off_route">The bus left its usual route</string>
+    <string name="channel_status">Tracking status</string>
+    <string name="channel_alerts">Bus alerts</string>
+</resources>

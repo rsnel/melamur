@@ -1,0 +1,167 @@
+package it.snel.melamur
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.AlertDialog
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
+import android.os.Build
+import android.os.Bundle
+import android.view.View
+import android.widget.Button
+import android.widget.TextView
+import android.widget.Toast
+import it.snel.melamur.data.TallinjaApi
+import it.snel.melamur.map.MapData
+import it.snel.melamur.map.MapView
+import it.snel.melamur.map.RouteRenderer
+import it.snel.melamur.tracking.TrackingService
+import it.snel.melamur.tracking.TripHub
+
+class MainActivity : Activity(), LocationListener {
+    private lateinit var map: MapView
+    private lateinit var status: TextView
+    private lateinit var nextStop: TextView
+    private lateinit var destination: TextView
+    private lateinit var alert: TextView
+    private lateinit var lm: LocationManager
+    private val prefs by lazy { getSharedPreferences("melamur", MODE_PRIVATE) }
+    private val hasConsent get() = prefs.getLong("consent_at", 0L) > 0L
+    private val hubListener = { render() }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+        map = findViewById(R.id.map)
+        status = findViewById(R.id.status); nextStop = findViewById(R.id.nextStop)
+        destination = findViewById(R.id.destination); alert = findViewById(R.id.alert)
+        lm = getSystemService(LocationManager::class.java)
+
+        findViewById<Button>(R.id.center).setOnClickListener {
+            if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
+        }
+        findViewById<Button>(R.id.privacy).setOnClickListener { showConsent(firstRun = false) }
+        map.onStopTapped = { s ->
+            AlertDialog.Builder(this).setTitle(s.name.ifEmpty { "Bus stop" })
+                .setMessage("Warn me to press STOP before this stop?")
+                .setPositiveButton("Set destination") { _, _ -> TripHub.destination = s; render() }
+                .setNeutralButton("Clear destination") { _, _ -> TripHub.destination = null; render() }
+                .setNegativeButton(R.string.close, null).show()
+        }
+
+        Thread {
+            val api = TallinjaApi(this)
+            val data = MapData(this)
+            val stops = api.stops()
+            val byId = stops.associateBy { it.id }
+            val routes = api.routes().map { RouteRenderer.build(it, byId) }
+            runOnUiThread { map.data = data; map.stops = stops; map.routes = routes }
+        }.start()
+
+        if (!hasConsent && !prefs.getBoolean("declined", false)) showConsent(firstRun = true)
+        else if (hasConsent) requestPerms()
+        render()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        TripHub.listen(hubListener)
+        startOwnLocation()
+        render()
+    }
+
+    override fun onPause() {
+        TripHub.unlisten(hubListener)
+        lm.removeUpdates(this) // the UI only uses location while visible
+        super.onPause()
+    }
+
+    // ---------------- consent (GDPR)
+    private fun showConsent(firstRun: Boolean) {
+        val b = AlertDialog.Builder(this).setTitle(R.string.consent_title).setMessage(R.string.consent_text)
+            .setCancelable(!firstRun)
+        if (hasConsent) {
+            b.setPositiveButton(R.string.close, null)
+            b.setNegativeButton(R.string.consent_withdraw) { _, _ ->
+                prefs.edit().remove("consent_at").putBoolean("declined", true).apply()
+                stopService(Intent(this, TrackingService::class.java)); render()
+            }
+        } else {
+            b.setPositiveButton(R.string.consent_accept) { _, _ ->
+                prefs.edit().putLong("consent_at", System.currentTimeMillis()).remove("declined").apply()
+                requestPerms()
+            }
+            b.setNegativeButton(R.string.consent_decline) { _, _ ->
+                prefs.edit().putBoolean("declined", true).apply(); render()
+            }
+        }
+        b.show()
+    }
+
+    // ---------------- permissions
+    private fun requestPerms() {
+        val p = mutableListOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+        if (Build.VERSION.SDK_INT >= 33) {
+            p += Manifest.permission.POST_NOTIFICATIONS; p += Manifest.permission.NEARBY_WIFI_DEVICES
+        }
+        val missing = p.filter { checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+        if (missing.isEmpty()) startTracking() else requestPermissions(missing.toTypedArray(), 1)
+    }
+
+    override fun onRequestPermissionsResult(rc: Int, perms: Array<out String>, res: IntArray) {
+        super.onRequestPermissionsResult(rc, perms, res)
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            startTracking(); startOwnLocation()
+        } else Toast.makeText(this, "Without location MelaMur cannot detect your bus ride.", Toast.LENGTH_LONG).show()
+    }
+
+    private fun startTracking() {
+        if (!hasConsent) return
+        startForegroundService(Intent(this, TrackingService::class.java))
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startOwnLocation() {
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return
+        val providers = if (Build.VERSION.SDK_INT >= 31 && lm.hasProvider(LocationManager.FUSED_PROVIDER))
+            listOf(LocationManager.FUSED_PROVIDER) else listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+        for (pr in providers) runCatching {
+            lm.getLastKnownLocation(pr)?.let { onLocationChanged(it) }
+            lm.requestLocationUpdates(pr, 2000L, 0f, this)
+        }
+    }
+
+    override fun onLocationChanged(l: Location) =
+        map.setMyLocation(l.latitude, l.longitude, l.accuracy, if (l.hasBearing() && l.speed > 2f) l.bearing else null)
+
+    @Deprecated("needed for API < 29")
+    override fun onStatusChanged(p: String?, s: Int, b: Bundle?) {}
+    override fun onProviderEnabled(p: String) {}
+    override fun onProviderDisabled(p: String) {}
+
+    // ---------------- panel
+    private fun render() {
+        val s = TripHub.snapshot
+        status.setText(if (!hasConsent) R.string.status_off else TripHub.status)
+        if (s.onBoard && s.routeName != null) status.append("  ·  Route ${s.routeName} → ${s.headsign ?: ""}")
+        nextStop.text = s.nextStop?.let { n ->
+            "Next stop: ${n.name.ifEmpty { "—" }}" + (s.nextStopDist?.let { " (${it.toInt()} m)" } ?: "")
+        } ?: if (s.onBoard) "Locating bus…" else "Tap a stop to set your destination"
+        nextStop.visibility = View.VISIBLE
+        val d = TripHub.destination
+        destination.text = d?.let { "Destination: ${it.name}" } ?: ""
+        destination.visibility = if (d == null) View.GONE else View.VISIBLE
+        val msg = when {
+            s.pressStop -> getString(R.string.press_stop)
+            s.offRoute -> getString(R.string.off_route)
+            else -> null
+        }
+        alert.text = msg; alert.visibility = if (msg == null) View.GONE else View.VISIBLE
+        map.activeRouteId = s.routeId; map.nextStopId = s.nextStop?.id; map.destinationStopId = d?.id
+        map.invalidate()
+    }
+}
