@@ -225,9 +225,13 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
                 val hl = s.id == nextStopId || s.id == destinationStopId
                 val r = (if (hl) 7 else 4) * dp
-                s.heading?.let { h ->  // tick pointing in the served direction of travel
+                s.heading?.let { h ->  // arrow pointing in the served direction of bus travel
                     val br = Math.toRadians(h.toDouble())
-                    c.drawLine(pt[0], pt[1], pt[0] + 3 * r * sin(br).toFloat(), pt[1] - 3 * r * cos(br).toFloat(), stopRing)
+                    val len = 3.4f * r
+                    val tx = pt[0] + len * sin(br).toFloat(); val ty = pt[1] - len * cos(br).toFloat()
+                    c.drawLine(pt[0], pt[1], tx, ty, stopRing)
+                    arrowPaint.color = Color.rgb(225, 6, 0)
+                    drawArrow(c, tx, ty, h, (if (hl) 7 else 5) * dp)
                 }
                 stopFill.color = if (s.id == destinationStopId) Color.rgb(225, 6, 0) else Color.WHITE
                 c.drawCircle(pt[0], pt[1], r, stopFill); c.drawCircle(pt[0], pt[1], r, stopRing)
