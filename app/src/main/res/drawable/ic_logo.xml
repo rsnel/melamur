@@ -1,21 +1,30 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Red outline of a bus seen from the left (door) side: angular, single-deck,
-     two door openings on the left side. Deliberately unlike the round green
-     Tallinja mark. -->
+<!-- Red outline of a bus travelling LEFT (Malta drives on the left): the front
+     is the raked end on the left, a chevron points the way, and motion lines
+     trail on the right. Thin strokes, no doors or windows. Deliberately unlike
+     the round green Tallinja mark. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp" android:height="48dp"
     android:viewportWidth="48" android:viewportHeight="48">
-    <!-- body -->
-    <path android:strokeColor="#E10600" android:strokeWidth="2.6" android:strokeLineJoin="round"
+
+    <!-- body: flat rear on the right, raked nose on the left (front) -->
+    <path android:strokeColor="#E10600" android:strokeWidth="1.4"
+        android:strokeLineJoin="round" android:strokeLineCap="round"
         android:fillColor="#00000000"
-        android:pathData="M4,13 L40,13 L44,19 L44,34 L4,34 Z" />
-    <!-- windscreen + windows -->
-    <path android:strokeColor="#E10600" android:strokeWidth="1.8" android:fillColor="#00000000"
-        android:pathData="M8,17 h7 v6 h-7 z M24,17 h7 v6 h-7 z M35,17 h4 l3,4 v2 h-7 z" />
-    <!-- doors (left side) -->
-    <path android:strokeColor="#E10600" android:strokeWidth="1.8" android:fillColor="#00000000"
-        android:pathData="M17,17 v15 M22,17 v15 M17,17 h5 M19.5,17 v15" />
+        android:pathData="M40,15 L14,15 L8,20 L8,31 L40,31 Z" />
+
     <!-- wheels -->
-    <path android:strokeColor="#E10600" android:strokeWidth="2.4" android:fillColor="#0B0B0B"
-        android:pathData="M8,34 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0 M31,34 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+    <path android:strokeColor="#E10600" android:strokeWidth="1.1" android:fillColor="#00000000"
+        android:pathData="M11.2,31 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0
+                          M30.3,31 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0" />
+
+    <!-- direction chevron at the nose, pointing left -->
+    <path android:strokeColor="#E10600" android:strokeWidth="1.4"
+        android:strokeLineJoin="round" android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M6,21 L2.5,25 L6,29" />
+
+    <!-- motion lines trailing on the right -->
+    <path android:strokeColor="#E10600" android:strokeWidth="1.2" android:strokeLineCap="round"
+        android:pathData="M42.5,19 L46.5,19 M43.5,24 L47,24 M42.5,29 L46.5,29" />
 </vector>
