@@ -15,9 +15,25 @@ data class BusStop(
     val lat: Double,
     val lon: Double,
     val heading: Float?,
+    /** Official Tallinja stop number when available (from the API/GTFS); null for OSM-only data. */
+    val code: String? = null,
 ) {
     val x = Geo.x(lon)
     val y = Geo.y(lat)
+
+    /** Which island the stop is on (Gozo lies north of Malta; Comino has no stops). */
+    val island: String get() = if (lat >= 36.0) "Gozo" else "Malta"
+
+    /** 8-point compass of the served direction of travel, or null if unknown. */
+    val compass: String? get() = heading?.let {
+        val dirs = arrayOf("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+        dirs[(((it + 22.5f) % 360f) / 45f).toInt().coerceIn(0, 7)]
+    }
+
+    val arrow: String get() = when (compass) {
+        "N" -> "↑"; "NE" -> "↗"; "E" -> "→"; "SE" -> "↘"
+        "S" -> "↓"; "SW" -> "↙"; "W" -> "←"; "NW" -> "↖"; else -> "•"
+    }
 }
 
 data class RouteDirection(

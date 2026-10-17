@@ -75,7 +75,8 @@ class TallinjaApi(private val ctx: Context) {
         return List(a.length()) { i ->
             val o = a.getJSONObject(i)
             BusStop(o.getString("id"), o.optString("name"), o.getDouble("lat"), o.getDouble("lon"),
-                if (o.has("heading")) o.getDouble("heading").toFloat() else null)
+                if (o.has("heading")) o.getDouble("heading").toFloat() else null,
+                if (o.has("code")) o.optString("code") else null)
         }
     }
 

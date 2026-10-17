@@ -57,6 +57,11 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         invalidate()
     }
 
+    /** Centre on a specific stop (e.g. from search) and zoom in; leaves follow mode. */
+    fun centerOn(s: BusStop) {
+        cx = s.x; cy = s.y; if (scale < 3f) scale = 6f; follow = false; invalidate()
+    }
+
     /** Centre on the user; zoom in to street level if we are zoomed far out. */
     fun centerOnMe(): Boolean {
         val m = me ?: return false

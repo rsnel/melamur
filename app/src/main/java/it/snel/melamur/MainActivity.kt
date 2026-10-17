@@ -45,6 +45,7 @@ class MainActivity : Activity(), LocationListener {
             if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
         }
         findViewById<Button>(R.id.privacy).setOnClickListener { showConsent(firstRun = false) }
+        findViewById<Button>(R.id.search).setOnClickListener { showSearch() }
         map.onStopTapped = { s ->
             AlertDialog.Builder(this).setTitle(s.name.ifEmpty { "Bus stop" })
                 .setMessage("Warn me to press STOP before this stop?")
@@ -82,6 +83,57 @@ class MainActivity : Activity(), LocationListener {
         TripHub.unlisten(hubListener)
         lm.removeUpdates(this) // the UI only uses location while visible
         super.onPause()
+    }
+
+    // ---------------- stop search
+    private fun showSearch() {
+        val d = (resources.displayMetrics.density)
+        val pad = (16 * d).toInt()
+        val white = android.graphics.Color.WHITE
+        val grey = android.graphics.Color.rgb(176, 176, 176)
+        val box = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0)
+        }
+        val input = android.widget.EditText(this).apply {
+            hint = getString(R.string.search_hint); setSingleLine()
+            setTextColor(white); setHintTextColor(grey)
+        }
+        val list = android.widget.ListView(this)
+        box.addView(input); box.addView(list)
+        val adapter = object : android.widget.ArrayAdapter<it.snel.melamur.data.BusStop>(
+            this, android.R.layout.simple_list_item_2, android.R.id.text1, ArrayList()
+        ) {
+            override fun getView(pos: Int, cv: android.view.View?, parent: android.view.ViewGroup): android.view.View {
+                val v = super.getView(pos, cv, parent)
+                val s = getItem(pos)!!
+                v.findViewById<android.widget.TextView>(android.R.id.text1).apply {
+                    text = s.name; setTextColor(white)
+                }
+                v.findViewById<android.widget.TextView>(android.R.id.text2).apply {
+                    val dir = s.compass?.let { " · ${s.arrow} $it" } ?: ""
+                    text = "${s.island}$dir" + (s.code?.let { "  ·  #$it" } ?: "")
+                    setTextColor(grey)
+                }
+                return v
+            }
+        }
+        list.adapter = adapter
+        val dialog = AlertDialog.Builder(this).setTitle(R.string.search_title).setView(box)
+            .setNegativeButton(R.string.close, null).create()
+        fun refresh() {
+            val r = it.snel.melamur.data.StopSearch.search(map.stops, input.text.toString())
+            adapter.clear(); adapter.addAll(r); adapter.notifyDataSetChanged()
+        }
+        input.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) = refresh()
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        list.setOnItemClickListener { _, _, pos, _ ->
+            val s = adapter.getItem(pos) ?: return@setOnItemClickListener
+            TripHub.destination = s; map.centerOn(s); render(); dialog.dismiss()
+        }
+        dialog.show()
     }
 
     // ---------------- consent (GDPR)

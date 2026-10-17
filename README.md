@@ -28,6 +28,13 @@ Alternative Malta bus app (Android, Kotlin, no Google Play Services).
   vibrating heads-up alert.
 - **Off-route warning**: three good fixes more than 70 m off the matched route
   shape trigger an alert.
+- **Stop search** (🔍 in the top bar): type a stop name (diacritic-insensitive —
+  "zabbar" finds "Ħaż-Żabbar") or, once the backend supplies them, a stop number.
+  Each result shows its **island** (Malta/Gozo) and **direction of travel**
+  (compass + arrow), so the several stops that share a name are easy to tell
+  apart. Tapping a result centres the map on it and sets it as your destination.
+  Note: the OSM data has no official Tallinja stop numbers (only names); numbers
+  light up automatically when an API/GTFS feed provides the `code` field.
 - **Bus stops on the left**: Malta drives on the left and buses only have doors on
   the left. The converter snaps every OSM stop to the nearest bus-usable road,
   works out which direction of travel the stop serves (the one with the stop on

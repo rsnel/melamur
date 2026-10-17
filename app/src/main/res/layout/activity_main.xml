@@ -16,6 +16,9 @@
             android:layout_weight="1" android:layout_marginStart="10dp"
             android:text="@string/app_name" android:textColor="@color/mm_red"
             android:textSize="22sp" android:textStyle="bold" />
+        <Button android:id="@+id/search" style="@style/MmButton"
+            android:layout_width="wrap_content" android:layout_height="40dp"
+            android:layout_marginEnd="8dp" android:text="@string/search" />
         <Button android:id="@+id/privacy" style="@style/MmButton"
             android:layout_width="wrap_content" android:layout_height="40dp"
             android:text="@string/privacy" />

@@ -9,6 +9,9 @@
     <string name="close">Close</string>
     <string name="center">◎</string>
     <string name="privacy">Privacy</string>
+    <string name="search">🔍</string>
+    <string name="search_title">Find a bus stop</string>
+    <string name="search_hint">Stop name or number</string>
     <string name="status_off">Bus tracking off (no consent)</string>
     <string name="status_waiting">Waiting for “Tallinja Wi-Fi”…</string>
     <string name="status_onboard">On board — GPS on</string>
