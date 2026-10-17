@@ -15,9 +15,8 @@ To save the Overpass response yourself (e.g. behind a proxy / in a browser),
 use this query at https://overpass-api.de/api/interpreter :
 
   [out:json][timeout:180];
-  area["ISO3166-1"="MT"][admin_level=2]->.a;
-  rel(area.a)["route"="bus"];
-  out tags geom;
+  relation["route"="bus"](35.75,14.15,36.12,14.62);
+  out geom;
 
 Output matches TallinjaApi.parseRoutes:
   [{"id","short_name","color":"#RRGGBB",
@@ -28,10 +27,11 @@ import json, sys, urllib.parse, urllib.request
 from collections import defaultdict
 
 OVERPASS = "https://overpass-api.de/api/interpreter"
+# Bounding box around the Maltese islands (S,W,N,E) — robust, no area resolution.
+BBOX = "35.75,14.15,36.12,14.62"
 QUERY = ('[out:json][timeout:180];'
-         'area["ISO3166-1"="MT"][admin_level=2]->.a;'
-         'rel(area.a)["route"="bus"];'
-         'out tags geom;')
+         f'relation["route"="bus"]({BBOX});'
+         'out geom;')
 STOP_ROLES = ("stop", "platform", "stop_entry_only", "stop_exit_only",
               "platform_entry_only", "platform_exit_only")
 
@@ -97,15 +97,23 @@ def main():
     data = json.load(open(a.src)) if a.src else fetch()
     out = a.out
 
+    rels = [el for el in data.get("elements", []) if el.get("type") == "relation"]
     by_ref = defaultdict(list)
-    for el in data.get("elements", []):
-        if el.get("type") != "relation":
-            continue
+    no_geom = 0
+    for el in rels:
         d, tags = direction(el)
         if not d["shape"]:
+            no_geom += 1
             continue
         ref = tags.get("ref") or tags.get("name") or d["id"]
         by_ref[ref].append((d, tags))
+    if not rels:
+        sys.stderr.write("No bus route relations in the Overpass response. If you saved it "
+                         "yourself, check the query/bbox; otherwise Overpass may have been busy "
+                         "(try again).\n")
+    elif no_geom == len(rels):
+        sys.stderr.write(f"{len(rels)} relations found but none had member geometry — the query "
+                         "must end with 'out geom;' (not 'out;' or 'out tags;').\n")
 
     routes = []
     for ref, dirs in sorted(by_ref.items()):
