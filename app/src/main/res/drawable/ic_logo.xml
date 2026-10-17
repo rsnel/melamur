@@ -1,30 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Red outline of a bus travelling LEFT (Malta drives on the left): the front
-     is the raked end on the left, a chevron points the way, and motion lines
-     trail on the right. Thin strokes, no doors or windows. Deliberately unlike
-     the round green Tallinja mark. -->
+<!-- Generated from art/melamur-logo.svg. Red outline of a modern bus travelling
+     LEFT (Malta drives on the left; front is the left end): wheels tucked into
+     wheel-wells with their tops hidden, motion lines trailing at the back. No
+     doors or windows. Deliberately unlike the round green Tallinja mark. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="48dp" android:height="48dp"
     android:viewportWidth="48" android:viewportHeight="48">
 
-    <!-- body: flat rear on the right, raked nose on the left (front) -->
-    <path android:strokeColor="#E10600" android:strokeWidth="1.4"
+    <!-- body with wheel-wells arched into the underside -->
+    <path android:strokeColor="#E10600" android:strokeWidth="2.1"
         android:strokeLineJoin="round" android:strokeLineCap="round"
         android:fillColor="#00000000"
-        android:pathData="M40,15 L14,15 L8,20 L8,31 L40,31 Z" />
+        android:pathData="M11.5,13.5 L38.5,13.5 Q41,13.5 41,16 L41,27.5 Q41,30 38.5,30 L35.9,30 A3.9,3.9 0 0 0 28.1,30 L18.4,30 A3.9,3.9 0 0 0 10.6,30 L8,30 Q5.5,30 5.5,27.5 L5.5,19.5 Q5.5,13.5 11.5,13.5 Z" />
 
-    <!-- wheels -->
-    <path android:strokeColor="#E10600" android:strokeWidth="1.1" android:fillColor="#00000000"
-        android:pathData="M11.2,31 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0
-                          M30.3,31 a3.2,3.2 0 1,0 6.4,0 a3.2,3.2 0 1,0 -6.4,0" />
+    <!-- wheels: lower arc only, tops hidden in the wells -->
+    <path android:strokeColor="#E10600" android:strokeWidth="1.8"
+        android:strokeLineCap="round" android:fillColor="#00000000"
+        android:pathData="M17.10,28.50 A3,3 0 1 1 11.90,28.50 M34.60,28.50 A3,3 0 1 1 29.40,28.50" />
 
-    <!-- direction chevron at the nose, pointing left -->
-    <path android:strokeColor="#E10600" android:strokeWidth="1.4"
-        android:strokeLineJoin="round" android:strokeLineCap="round"
-        android:fillColor="#00000000"
-        android:pathData="M6,21 L2.5,25 L6,29" />
-
-    <!-- motion lines trailing on the right -->
-    <path android:strokeColor="#E10600" android:strokeWidth="1.2" android:strokeLineCap="round"
-        android:pathData="M42.5,19 L46.5,19 M43.5,24 L47,24 M42.5,29 L46.5,29" />
+    <!-- motion lines at the back -->
+    <path android:strokeColor="#E10600" android:strokeWidth="1.8"
+        android:strokeLineCap="round" android:fillColor="#00000000"
+        android:pathData="M43,17.5 L46.8,17.5 M44,22.5 L47.4,22.5 M43,27.5 L46.8,27.5" />
 </vector>
