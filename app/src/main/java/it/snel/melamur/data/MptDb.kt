@@ -76,6 +76,22 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         ) { Departure(it.getString(0), it.getStringOrNull(2) ?: "", it.getLong(3), it.getInt(1), it.getInt(4), date) }
     }
 
+    /**
+     * Upcoming departures from a stop from [now] onwards, merging today's trips
+     * with the previous service day's after-midnight trips (SQL-FORMAT §6.1),
+     * sorted by real departure time.
+     */
+    fun departuresFrom(stopNumber: Int, now: java.time.LocalDateTime, limit: Int = 15): List<Departure> {
+        val today = now.toLocalDate()
+        val nowMin = now.hour * 60 + now.minute
+        val out = ArrayList<Departure>()
+        out += departures(stopNumber, today, versionFor(today)).filter { it.minutes >= nowMin }
+        val prev = today.minusDays(1)
+        out += departures(stopNumber, prev, versionFor(prev))
+            .filter { it.minutes >= 1440 && Malta.at(prev, it.minutes) >= now }
+        return out.sortedBy { it.time }.take(limit)
+    }
+
     /** All stops a trip serves, in driving order with wall-clock minutes (§6.2). */
     fun tripStops(tripId: Long): List<TripStop> = query(
         "SELECT ts.seq, ts.stop_number, ts.name, (tr.first_minute + po.delta) AS minutes " +

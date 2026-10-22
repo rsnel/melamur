@@ -75,7 +75,7 @@ class MainActivity : Activity(), LocationListener {
         }
         findViewById<Button>(R.id.search).setOnClickListener { showSearch { handleMapPick(it) } }
         findViewById<Button>(R.id.menu).setOnClickListener { showMenu() }
-        map.onStopTapped = { bs -> stopFor(bs)?.let { showStopLines(it) } }
+        map.onStopTapped = { bs -> stopFor(bs)?.let { showStop(it) } }
         map.onMapLongPress = { lat, lon, poi -> showLongPressMenu(lat, lon, poi) }
         destination.setOnClickListener { if (NavHub.snapshot.active || NavHub.snapshot.arrived) cancelNav() }
 
@@ -150,36 +150,51 @@ class MainActivity : Activity(), LocationListener {
 
     private fun stopFor(bs: BusStop): Stop? = allStops.firstOrNull { it.number.toString() == bs.id }
 
-    // ---------------- stop → lines serving it
-    private fun showStopLines(stop: Stop) {
+    // ---------------- stop → departures board + lines serving it
+    private fun showStop(stop: Stop) {
         val db = DbManager.db ?: return
         Thread {
-            val v = db.versionFor(LocalDate.now(Malta.ZONE))
+            val now = LocalDateTime.now(Malta.ZONE)
+            val v = db.versionFor(now.toLocalDate())
             val lines = db.linesForStop(stop.number, v)
+            val colorOf = lines.associate { it.code to it.color }
+            val board = db.departuresFrom(stop.number, now, 15)
             runOnUiThread {
-                val adapter = object : ArrayAdapter<Line>(this, android.R.layout.simple_list_item_2,
-                    android.R.id.text1, lines) {
+                val pad = (12 * resources.displayMetrics.density).toInt()
+                val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
+                val header = TextView(this).apply {
+                    text = if (lines.isEmpty()) "No lines serve this stop"
+                    else "Lines: " + lines.joinToString("  ") { it.code }
+                    setTextColor(grey); setPadding(0, 0, 0, pad)
+                }
+                val list = ListView(this)
+                box.addView(header); box.addView(list)
+                val adapter = object : ArrayAdapter<Departure>(this, android.R.layout.simple_list_item_2,
+                    android.R.id.text1, ArrayList(board)) {
                     override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
-                        val view = super.getView(pos, cv, parent); val l = getItem(pos)!!
+                        val view = super.getView(pos, cv, parent); val d = getItem(pos)!!
                         view.findViewById<TextView>(android.R.id.text1).apply {
-                            text = "● ${l.code}"; setTextColor(l.color)
+                            text = "●  ${d.routeCode}   →  ${d.towards}"
+                            setTextColor(colorOf[d.routeCode] ?: white)
                         }
+                        val mins = java.time.Duration.between(now, d.time).toMinutes()
+                        val cd = if (mins <= 0) "now" else "in $mins min"
                         view.findViewById<TextView>(android.R.id.text2).apply {
-                            text = l.name; setTextColor(grey)
+                            text = "${Malta.hhmm(d.minutes)}   ·   $cd"; setTextColor(grey)
                         }
                         return view
                     }
                 }
-                val list = ListView(this).apply { this.adapter = adapter }
+                list.adapter = adapter
                 val dlg = AlertDialog.Builder(this)
                     .setTitle(stop.display + "  ·  #${stop.number}")
-                    .setView(list)
+                    .setView(box)
                     .setPositiveButton(R.string.from_here) { _, _ -> from = Place(stop.display, stop.lat, stop.lon); toast("Start: ${stop.display}") }
                     .setNeutralButton(R.string.to_here) { _, _ -> to = Place(stop.display, stop.lat, stop.lon); toast("Destination: ${stop.display}") }
                     .setNegativeButton(R.string.close, null)
                     .create()
-                list.setOnItemClickListener { _, _, p, _ -> showRouteOnMap(adapter.getItem(p)!!.code); dlg.dismiss() }
-                if (lines.isEmpty()) adapter.add(Line("", "No lines found for this stop", grey))
+                list.setOnItemClickListener { _, _, p, _ -> adapter.getItem(p)?.let { showRouteOnMap(it.routeCode) }; dlg.dismiss() }
+                if (board.isEmpty()) { header.append("\n\nNo more departures today."); }
                 dlg.show()
             }
         }.start()
@@ -269,7 +284,7 @@ class MainActivity : Activity(), LocationListener {
     private fun handleMapPick(r: SearchResult) {
         map.centerOn(BusStop(r.stopNumber?.toString() ?: "x", r.label, r.lat, r.lon, null))
         if (r.kind == SearchResult.Kind.STOP && r.stopNumber != null)
-            allStops.firstOrNull { it.number == r.stopNumber }?.let { showStopLines(it) }
+            allStops.firstOrNull { it.number == r.stopNumber }?.let { showStop(it) }
     }
 
     // ---------------- burger menu
