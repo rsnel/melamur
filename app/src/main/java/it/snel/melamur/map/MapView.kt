@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import it.snel.melamur.data.BusStop
+import it.snel.melamur.data.Poi
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -39,10 +40,14 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         set(v) { field = v; invalidate() }
     var streets: List<StreetLabel> = emptyList()
         set(v) { field = v; invalidate() }
+    var pois: List<Poi> = emptyList()
+        set(v) { field = v; invalidate() }
     var activeRouteId: String? = null
     var nextStopId: String? = null
     var destinationStopId: String? = null
     var onStopTapped: ((BusStop) -> Unit)? = null
+    /** Long-press on the map: reports the world position and the POI hit, if any. */
+    var onMapLongPress: ((lat: Double, lon: Double, poi: Poi?) -> Unit)? = null
     var onFollowChanged: ((Boolean) -> Unit)? = null
 
     // view state: centre in projected metres, scale in px per metre
@@ -96,6 +101,13 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 ?.let { onStopTapped?.invoke(it) }
             return true
         }
+        override fun onLongPress(e: MotionEvent) {
+            val wx = cx + (e.x - width / 2f) / scale; val wy = cy - (e.y - height / 2f) / scale
+            val r = 24 * dp / scale
+            val poi = pois.minByOrNull { hypot(it.x - wx, it.y - wy) }
+                ?.takeIf { hypot(it.x - wx, it.y - wy) < r }
+            onMapLongPress?.invoke(Geo.lat(wy).toDouble(), Geo.lon(wx).toDouble(), poi)
+        }
     })
 
     private fun zoomAt(fx: Float, fy: Float, f: Float) {
@@ -147,6 +159,12 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
     }
     private val placeDot = fill(Color.WHITE)
+    private val poiFill = fill(Color.rgb(255, 193, 7))
+    private val poiStroke = stroke(Color.WHITE).apply { strokeWidth = 1.5f * dp }
+    private val poiLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(255, 193, 7); textSize = 12 * dp; setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+    }
+    private val diamond = Path()
     private val occupied = HashSet<Long>() // label collision grid, rebuilt per frame
     private val meFill = fill(Color.WHITE)
     private val meRing = stroke(Color.rgb(225, 6, 0)).apply { strokeWidth = 4 * dp }
@@ -242,6 +260,15 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 c.drawCircle(pt[0], pt[1], r, stopFill); c.drawCircle(pt[0], pt[1], r, stopRing)
                 if (showLabels || hl) c.drawText(s.name, pt[0] + r + 3 * dp, pt[1] + 4 * dp, label)
             }
+        }
+        for (p in pois) {
+            if (p.x < vx0 || p.x > vx1 || p.y < vy0 || p.y > vy1) continue
+            pt[0] = p.x; pt[1] = p.y; matrix.mapPoints(pt)
+            val s = 6 * dp
+            diamond.reset(); diamond.moveTo(pt[0], pt[1] - s); diamond.lineTo(pt[0] + s, pt[1])
+            diamond.lineTo(pt[0], pt[1] + s); diamond.lineTo(pt[0] - s, pt[1]); diamond.close()
+            c.drawPath(diamond, poiFill); c.drawPath(diamond, poiStroke)
+            if (scale > 1.5f) c.drawText(p.name, pt[0] + s + 3 * dp, pt[1] + 4 * dp, poiLabel)
         }
         me?.let { m ->
             pt[0] = m[0]; pt[1] = m[1]; matrix.mapPoints(pt)

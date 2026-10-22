@@ -9,9 +9,66 @@
     <string name="close">Close</string>
     <string name="center">◎</string>
     <string name="privacy">Privacy</string>
+    <string name="menu">☰</string>
     <string name="search">🔍</string>
-    <string name="search_title">Find a bus stop</string>
-    <string name="search_hint">Stop name or number</string>
+    <string name="search_title">Search</string>
+    <string name="search_hint">Stop, address or landmark</string>
+
+    <!-- menu -->
+    <string name="menu_map">Map</string>
+    <string name="menu_planner">Planner</string>
+    <string name="menu_reload">Reload database</string>
+    <string name="menu_about">About</string>
+
+    <!-- database -->
+    <string name="db_pick_title">Select the MelaMur dataset</string>
+    <string name="db_pick_text">MelaMur needs the Malta bus dataset (an .sqlite file with routes, stops, lines and timetables). Choose the file to import. You can reload or replace it later from the menu.</string>
+    <string name="db_choose">Choose file…</string>
+    <string name="db_reopen">Re-open current</string>
+    <string name="db_import_new">Import new file…</string>
+    <string name="db_importing">Importing dataset…</string>
+    <string name="db_imported">Dataset imported</string>
+    <string name="db_import_failed">Could not import: %1$s</string>
+    <string name="db_none">No dataset loaded. Open the menu to import one.</string>
+
+    <!-- stop / lines -->
+    <string name="lines_at">Lines at this stop</string>
+    <string name="from_here">Set as start</string>
+    <string name="to_here">Set as destination</string>
+    <string name="show_on_map">Show on map</string>
+
+    <!-- POI -->
+    <string name="poi_store">Store POI</string>
+    <string name="poi_delete">Delete POI</string>
+    <string name="poi_name">POI name</string>
+    <string name="poi_delete_confirm">Delete this saved place?</string>
+    <string name="set_from">Set as start</string>
+    <string name="set_to">Set as destination</string>
+
+    <!-- planner -->
+    <string name="planner_title">Journey planner</string>
+    <string name="planner_from">Start: %1$s</string>
+    <string name="planner_to">Destination: %1$s</string>
+    <string name="planner_choose_from">Choose start</string>
+    <string name="planner_choose_to">Choose destination</string>
+    <string name="planner_now">Now</string>
+    <string name="planner_time">Depart: %1$s</string>
+    <string name="planner_search">Search</string>
+    <string name="planner_none">No journeys found. Try closer start/destination or a different time.</string>
+    <string name="planner_need">Choose a start and a destination first.</string>
+    <string name="navigate">Navigate</string>
+
+    <!-- navigation -->
+    <string name="nav_starting">Starting navigation…</string>
+    <string name="nav_walk_to">Walk to %1$s</string>
+    <string name="nav_ride_to">Bus %1$s to %2$s</string>
+    <string name="nav_arrived">You have arrived</string>
+    <string name="nav_cancel">Cancel navigation</string>
+    <string name="channel_nav">Navigation</string>
+
+    <!-- about -->
+    <string name="about_title">About MelaMur</string>
+    <string name="about_text">MelaMur — an alternative bus app for Malta.\n\nThis app is free software, licensed under the GNU General Public License v3 (GPLv3). Source: github.com/rsnel/melamur\n\nTimetables, routes and stops: © Malta Public Transport. Reuse of their data requires their permission.\n\nMap, places and streets: © OpenStreetMap contributors, licensed under the Open Database License (ODbL).\n\nStop positions are matched from OpenStreetMap and may be approximate.</string>
     <string name="status_off">Bus tracking off (no consent)</string>
     <string name="status_waiting">Waiting for “Tallinja Wi-Fi”…</string>
     <string name="status_onboard">On board — GPS on</string>

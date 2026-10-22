@@ -1,0 +1,349 @@
+MALTA PUBLIC TRANSPORT - SQL DATASET FORMAT (schema 1)
+======================================================
+
+Produced by mpt_sql.py from json_out/ (see JSON-FORMAT.txt for the
+source files). One dataset contains the whole bus network, including
+every timetable version that was ever imported, so the app can show the
+right timetable for any date.
+
+Files
+-----
+
+  mpt.sql      SQL dump (UTF-8 text, optionally gzipped: mpt.sql.gz).
+               This is the file to ship to the app.
+  mpt.sqlite   the same data as a ready SQLite database (the master
+               copy that mpt_sql.py keeps; can also be shipped as is).
+
+
+1. THE DUMP FILE
+----------------
+
+Rules the importer can rely on:
+
+  - Plain SQLite SQL, UTF-8, LF line endings.
+  - EXACTLY ONE COMPLETE STATEMENT PER LINE, ending in ";". No statement
+    spans lines and no line holds two statements. Lines starting with
+    "--" are comments; empty lines may occur.
+  - Order: comment line, "PRAGMA user_version = 1;",
+    "BEGIN TRANSACTION;", CREATE TABLE / CREATE VIEW statements, INSERT
+    statements (parents before children, max. 200 rows per INSERT),
+    CREATE INDEX statements, "COMMIT;".
+  - The dump always contains the COMPLETE dataset (all versions). It is
+    not a patch: import it into an EMPTY database.
+  - Only features available in SQLite 3.8.3+ are used (WITHOUT ROWID
+    tables, multi-row VALUES), so it works on every supported Android
+    version. No STRICT tables, generated columns, window functions or
+    JSON functions.
+  - Line breaks inside text values are written as char(10) expressions,
+    so they never break the one-statement-per-line rule.
+
+Importing on Android (example):
+
+    db = SQLiteDatabase.openOrCreateDatabase(newFile, null)
+    // the file contains its own BEGIN/COMMIT
+    for each line in mpt.sql:
+        if line is blank or starts with "--": continue
+        if line starts with "PRAGMA" or "BEGIN" or "COMMIT":
+            handle it, or skip it and wrap the loop in
+            db.beginTransaction() / setTransactionSuccessful() / endTransaction()
+        else db.execSQL(line without the final ";")
+    then check  SELECT value FROM meta WHERE key='schema_version'  == "1"
+    and atomically replace the old database file with the new one.
+
+Alternatively ship mpt.sqlite as an asset and copy it. If you use Room's
+createFromAsset, the Room entities must match these tables exactly; it is
+usually simpler to open this database with the plain SQLiteDatabase API
+or as a separate read-only Room database.
+
+Schema evolution: meta.schema_version (and PRAGMA user_version) changes
+only when the table layout changes incompatibly. Columns or tables may be
+ADDED within the same schema version; select columns by name, never
+with "SELECT *" and a fixed column order.
+
+
+2. CONVENTIONS
+--------------
+
+  - Times of day are INTEGER minutes since the start of the SERVICE DAY
+    (local midnight, Europe/Malta). Values >= 1440 are after midnight:
+    a trip of the Monday service at 1450 runs Tuesday 00:10. Format as
+    HH:MM with (m / 60) % 24 and m % 60.
+  - Weekday sets are INTEGER bit masks:
+        mon 1, tue 2, wed 4, thu 8, fri 16, sat 32, sun 64
+    (bit = 1 << (ISO weekday - 1); in Java: 1 << (dayOfWeek.getValue() - 1)).
+  - Coordinates: WGS84 decimal degrees, columns *_lat / *_lon or lat / lon.
+  - Lines (route shapes) are Google "encoded polyline" strings with
+    precision 5 (1e-5 degree, about 1 m), as decoded by
+    com.google.maps.android.PolyUtil.decode() from android-maps-utils, or
+    any standard polyline decoder. The points are in DRIVING ORDER.
+  - Bearings: degrees clockwise from true north (0 = N, 90 = E).
+  - Booleans: INTEGER 0/1.
+  - Stop number: INTEGER, the number on the bus stop pole; stable key
+    for a stop across routes and versions.
+  - Route code: TEXT, e.g. "13A", "TD1", "N11".
+
+
+3. VERSIONING
+-------------
+
+Table dataset_version lists the imported versions:
+
+    version_id  1, 2, 3, ...  (increasing; also in date order)
+    valid_from  'YYYY-MM-DD'  first SERVICE DATE on which it applies
+
+THE VERSION FOR SERVICE DATE D:
+
+    SELECT version_id FROM dataset_version
+    WHERE valid_from <= :D
+    ORDER BY valid_from DESC, version_id DESC LIMIT 1;
+
+    (No row: D is before the first version; use the oldest version, and
+    tell the user the timetable may not apply.)
+
+A version can lie in the future (valid_from > today): it then takes
+effect automatically on that date. Old versions are never deleted.
+
+The VERSIONED tables are route, direction, timetable and stop. Each row
+has
+    from_version   first version in which the row is valid
+    to_version     first version in which it is NO LONGER valid,
+                   NULL = still valid in the newest version
+and a row is part of version :v when
+
+    from_version <= :v AND (to_version IS NULL OR to_version > :v)
+
+(written as VALID(x, :v) below). Within one version there is at most one
+valid row per natural key:
+
+    route       code
+    direction   route_code, direction_index
+    timetable   route_code, direction_index, day_index
+    stop        stop_number
+
+All other tables are children of a versioned row (or shared lookup data)
+and are never changed after insertion; they are valid exactly when their
+parent row is. Unchanged data is shared between versions; only changed
+items get new rows.
+
+Rule of thumb: determine :v ONCE per service date and use the same :v
+for every table in a query.
+
+
+4. TABLES
+---------
+
+meta  (key TEXT PK, value TEXT)
+    schema_version      "1"
+    format              "mpt-sqlite"
+    timezone            "Europe/Malta"
+    polyline_precision  "5"
+    attribution         text that MUST be shown in the app (credits for
+                        Malta Public Transport and OpenStreetMap)
+    generated_at        UTC timestamp of the dump
+    latest_version      highest version_id
+
+dataset_version
+    version_id   INTEGER PK
+    valid_from   TEXT 'YYYY-MM-DD'
+    created_at   TEXT  UTC timestamp of the import
+    description  TEXT | NULL
+
+route                                   [versioned, key: code]
+    id, code, name (short label from MPT, often only the destination),
+    kml_color (colour of MPT's own map drawing; NOT an official route
+    colour), kmz_url, page_url, content_hash, from_version, to_version
+
+route_fetch                              (version_id, route_code) PK
+    fetched_at   when the data of that route in that version was
+                 downloaded (UTC). Use it for "timetable as of ...".
+
+route_shape                              child of route (route_id)
+    shape_no, name, direction_index (| NULL), leg_order (| NULL),
+    reversed (1: polyline is drawn against the driving direction),
+    color, width, polyline
+    MPT's original hand-drawn map lines. For display prefer
+    direction.polyline.
+
+direction                               [versioned, key: route_code,
+                                          direction_index]
+    id, route_code, direction_index (0, 1, ...; circular routes have
+    only 0), name ("Airport - Cirkewwa"), origin, destination,
+    length_m, polyline (the route snapped to the roads, driving order;
+    NULL if no geometry), match_breaks (>0: some parts are straight
+    lines), match_wrong_way_m, content_hash, from_version, to_version
+
+direction_stop                           child of direction (direction_id)
+    pos                position along the route (0, 1, ...)
+    stop_number        | NULL
+    occurrence         1 for the first visit of that stop number in this
+                       direction, 2 for a second visit (loops), ...
+    name
+    lat, lon           stop marker position: at the kerb, on the side
+                       where the bus stops
+    road_lat, road_lon same point on the road line (on the polyline)
+    departure_bearing  direction in which the bus LEAVES the stop
+    terminus           1: last stop; departure_bearing is then the
+                       arrival heading
+    distance_m         distance along direction.polyline
+    method             how the position was found (see JSON-FORMAT.txt,
+                       section 3): osm_name, osm_name_loose,
+                       osm_other_name, osm_other_routes, manual,
+                       interpolated, interpolated_rejected
+    osm_id             OpenStreetMap node | NULL
+    approximate        1: position estimated (can be 100s of metres off)
+    ambiguous          1: another pole with the same name also fitted
+
+timetable                               [versioned, key: route_code,
+                                          direction_index, day_index]
+    id, route_code, direction_index, day_index,
+    label ("Saturday & Sunday"), days_text,
+    weekdays           bit mask of the days this timetable runs (0 =
+                       unknown, see days_text)
+    stop_count         number of timetable_stop rows
+    trip_count         number of trip rows
+    content_hash, from_version, to_version
+    The timetables of one direction normally cover each weekday once.
+
+timetable_stop                           child of timetable
+    seq                0 .. stop_count-1, in driving order
+    stop_number        | NULL
+    occurrence         as in direction_stop
+    name, locality
+
+timetable_interchange                    child of timetable
+    seq, route_code, route_name: other routes serving the stop at seq
+    (as listed by MPT; informative)
+
+trip                                     child of timetable
+    id
+    column_no          order in MPT's timetable (chronological)
+    mpt_trip_id        MPT's internal id; informative only, not stable
+    first_minute       minutes at the first stop the trip serves
+    last_minute        minutes at the last stop it serves
+    pattern_id         its stopping pattern
+
+pattern / pattern_offset                 shared lookup data
+    A pattern is the list of time offsets of a trip; many trips share
+    one. pattern_offset (pattern_id, seq, delta) has a row for every seq
+    the trip SERVES; a seq without a row = trip does not stop there.
+
+        time of trip t at seq s = t.first_minute + delta
+
+    (view v_stop_time does this join: timetable_id, trip_id, seq,
+    minutes)
+
+stop                                    [versioned, key: stop_number]
+    id, stop_number, name, short_name (from MPT's stop index),
+    locality, lat, lon (| NULL; network-wide best position),
+    position_status (unique, resolved, exclusive, ambiguous, conflict,
+    unmatched, manual; see README), content_hash, from_version,
+    to_version
+
+view v_stop_routes (stop_number, route_code, from_version, to_version)
+    which routes serve a stop; apply VALID() with the timetable's
+    versions as for a versioned table.
+
+
+5. HOW THINGS LINK
+------------------
+
+  timetable_stop.stop_number  -> stop.stop_number           (same :v)
+  timetable (route_code, direction_index)
+                              -> direction (route_code, direction_index)
+  timetable_stop (stop_number, occurrence)
+                              -> direction_stop (stop_number, occurrence)
+                                 of that direction (same :v)
+  trip.timetable_id -> timetable.id; trip.pattern_id -> pattern
+  route_fetch (version_id = :v, route_code) -> route.code
+
+
+6. EXAMPLE QUERIES
+------------------
+
+6.1 Departures from stop :stop on service date D
+
+    :v   = version for D;      :bit = weekday bit of D
+    :pv  = version for D-1;    :pbit = weekday bit of D-1
+
+    SELECT tt.route_code, tt.direction_index, d.name AS towards,
+           tr.id AS trip_id, tr.first_minute + po.delta AS minutes
+    FROM timetable tt
+    JOIN timetable_stop ts ON ts.timetable_id = tt.id
+    JOIN trip tr           ON tr.timetable_id = tt.id
+    JOIN pattern_offset po ON po.pattern_id = tr.pattern_id
+                          AND po.seq = ts.seq
+    JOIN direction d       ON d.route_code = tt.route_code
+                          AND d.direction_index = tt.direction_index
+                          AND d.from_version <= :v
+                          AND (d.to_version IS NULL OR d.to_version > :v)
+    WHERE ts.stop_number = :stop
+      AND tt.from_version <= :v
+      AND (tt.to_version IS NULL OR tt.to_version > :v)
+      AND (tt.weekdays & :bit) <> 0
+      AND ts.seq < tt.stop_count - 1        -- no boarding at the last stop
+    ORDER BY minutes;
+
+    Run it again with :pv / :pbit for the previous service day and keep
+    the rows with minutes >= 1440 (subtract 1440: they run after
+    midnight on D). The minutes are WALL-CLOCK time, so do the
+    arithmetic in local time, not on the timeline:
+        LocalDateTime t = serviceDate.atStartOfDay().plusMinutes(minutes);
+        ZonedDateTime when = t.atZone(ZoneId.of("Europe/Malta"));
+    (Adding minutes to a ZonedDateTime would shift departures by an
+    hour on the days the clocks change.)
+
+6.2 All stops of a trip (e.g. for "next stop" display)
+
+    SELECT ts.seq, ts.stop_number, ts.name, tr.first_minute + po.delta
+    FROM trip tr
+    JOIN pattern_offset po ON po.pattern_id = tr.pattern_id
+    JOIN timetable_stop ts ON ts.timetable_id = tr.timetable_id
+                          AND ts.seq = po.seq
+    WHERE tr.id = :trip
+    ORDER BY ts.seq;
+
+6.3 Stops on the map with their departure arrows for a route direction
+
+    SELECT ds.stop_number, ds.name, ds.lat, ds.lon, ds.departure_bearing,
+           ds.approximate
+    FROM direction d JOIN direction_stop ds ON ds.direction_id = d.id
+    WHERE d.route_code = :code AND d.direction_index = :dir
+      AND d.from_version <= :v
+      AND (d.to_version IS NULL OR d.to_version > :v)
+    ORDER BY ds.pos;
+    The route line: PolyUtil.decode(d.polyline).
+
+6.4 Stops near a location (bounding box, refine by distance in code)
+
+    SELECT stop_number, name, locality, lat, lon FROM stop
+    WHERE from_version <= :v AND (to_version IS NULL OR to_version > :v)
+      AND lat BETWEEN :lat - 0.005 AND :lat + 0.005
+      AND lon BETWEEN :lon - 0.006 AND :lon + 0.006;
+
+    The two poles on either side of a road have different stop numbers;
+    to tell the user which way a pole serves, show the
+    departure_bearing values from direction_stop for that stop number.
+
+6.5 Routes valid on date D
+
+    SELECT r.code, r.name, f.fetched_at FROM route r
+    LEFT JOIN route_fetch f ON f.version_id = :v AND f.route_code = r.code
+    WHERE r.from_version <= :v
+      AND (r.to_version IS NULL OR r.to_version > :v)
+    ORDER BY r.code;
+    (fetched_at is NULL when the route was not re-downloaded for :v and
+    was carried over unchanged; look in older versions then.)
+
+
+7. LIMITATIONS
+--------------
+
+  - No public-holiday or seasonal calendars: versions come only from the
+    dates at which the data was downloaded and imported. The data does
+    not say which timetable runs on a public holiday.
+  - Stop positions come from OpenStreetMap matched by name; check
+    direction_stop.approximate / ambiguous and stop.position_status.
+  - Route lines are MPT's hand drawings snapped to OSM roads.
+  - Attribution (meta.attribution) must be displayed. Reuse of MPT's
+    data needs Malta Public Transport's permission; see the project
+    notes.

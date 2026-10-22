@@ -19,9 +19,9 @@
         <Button android:id="@+id/search" style="@style/MmButton"
             android:layout_width="wrap_content" android:layout_height="40dp"
             android:layout_marginEnd="8dp" android:text="@string/search" />
-        <Button android:id="@+id/privacy" style="@style/MmButton"
+        <Button android:id="@+id/menu" style="@style/MmButton"
             android:layout_width="wrap_content" android:layout_height="40dp"
-            android:text="@string/privacy" />
+            android:text="@string/menu" />
     </LinearLayout>
 
     <Button android:id="@+id/center"
