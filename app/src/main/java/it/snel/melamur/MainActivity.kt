@@ -212,7 +212,7 @@ class MainActivity : Activity(), LocationListener {
             val dirs = db.directionsForRoute(code, v)
             if (dirs.isEmpty()) return@Thread
             val route = BusRoute(code, code, dirs.first().color, dirs.map {
-                RouteDirection(it.directionIndex.toString(), it.name, it.shape, it.stopNumbers)
+                RouteDirection(it.directionIndex.toString(), it.name, it.shape, it.stopNumbers, it.color)
             })
             val gfx = RouteRenderer.build(route, busStopsById)
             runOnUiThread { map.routes = listOf(gfx); map.activeRouteId = code; map.invalidate() }

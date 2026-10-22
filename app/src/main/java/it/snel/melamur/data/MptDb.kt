@@ -101,9 +101,27 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         arrayOf("$tripId")
     ) { TripStop(it.getInt(0), if (it.isNull(1)) null else it.getInt(1), it.getStringOrNull(2) ?: "", it.getInt(3)) }
 
+    /**
+     * Colour per direction_index from route_shape (MPT's drawn line colour;
+     * the real per-direction line colour). Falls back to kml_color then palette.
+     */
+    fun shapeColors(code: String, v: Int): Map<Int, Int> {
+        val out = HashMap<Int, Int>()
+        query(
+            "SELECT rs.direction_index, rs.color FROM route_shape rs " +
+                "JOIN route r ON r.id=rs.route_id AND r.from_version<=? AND (r.to_version IS NULL OR r.to_version>?) " +
+                "WHERE r.code=? AND rs.direction_index IS NOT NULL AND rs.color IS NOT NULL ORDER BY rs.shape_no",
+            arrayOf("$v", "$v", code)
+        ) { it.getInt(0) to it.getStringOrNull(1) }.forEach { (dir, col) ->
+            if (!out.containsKey(dir) && col != null) out[dir] = parseColor(col, "$code/$dir")
+        }
+        return out
+    }
+
     /** Directions of a route with geometry and ordered stop numbers, for drawing. */
     fun directionsForRoute(code: String, v: Int): List<DirectionShape> {
-        val color = routeColor(code, v)
+        val fallback = routeColor(code, v)
+        val byDir = shapeColors(code, v)
         val dirs = query(
             "SELECT id, direction_index, name, polyline FROM direction " +
                 "WHERE route_code=? AND from_version<=? AND (to_version IS NULL OR to_version>?) ORDER BY direction_index",
@@ -116,7 +134,7 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
             for (k in xs.indices) { xs[k] = pts[2 * k]; ys[k] = pts[2 * k + 1] }
             val stopNums = query("SELECT stop_number FROM direction_stop WHERE direction_id=? ORDER BY pos",
                 arrayOf(id)) { if (it.isNull(0)) null else it.getInt(0).toString() }.filterNotNull()
-            DirectionShape(code, dir.toInt(), name, color, Polyline(xs, ys), stopNums)
+            DirectionShape(code, dir.toInt(), name, byDir[dir.toInt()] ?: fallback, Polyline(xs, ys), stopNums)
         }
     }
 

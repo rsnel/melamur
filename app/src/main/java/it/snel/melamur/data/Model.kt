@@ -41,6 +41,7 @@ data class RouteDirection(
     val headsign: String,
     val shape: Polyline,
     val stopIds: List<String>,
+    val color: Int = 0,
 )
 
 /** [color] comes from the operator data (route colour as used by the Tallinja app). */

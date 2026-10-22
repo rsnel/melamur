@@ -191,19 +191,19 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         }
         for (r in routes) {
             val active = activeRouteId == null || r.route.id == activeRouteId
-            routePaint.color = r.route.color
-            routePaint.alpha = if (active) 255 else 90
-            routePaint.strokeWidth = (if (active) 5f else 3f) * dp / scale
-            c.drawPath(r.shared, routePaint)
-            routePaint.strokeWidth = (if (active) 3f else 2f) * dp / scale
-            c.drawPath(r.split, routePaint)
+            for (dl in r.lines) {
+                routePaint.color = dl.color
+                routePaint.alpha = if (active) 255 else 90
+                routePaint.strokeWidth = (if (active) 4f else 2.5f) * dp / scale
+                c.drawPath(dl.path, routePaint)
+            }
         }
         c.restore()
 
-        // arrows on split route parts (screen space)
-        for (r in routes) {
-            arrowPaint.color = r.route.color
-            val a = r.arrows
+        // direction arrows along each route line (screen space)
+        for (r in routes) for (dl in r.lines) {
+            arrowPaint.color = dl.color
+            val a = dl.arrows
             var i = 0
             while (i < a.size) {
                 pt[0] = a[i]; pt[1] = a[i + 1]; matrix.mapPoints(pt)
