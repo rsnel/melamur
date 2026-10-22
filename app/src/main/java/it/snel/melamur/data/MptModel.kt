@@ -72,7 +72,7 @@ data class WalkLeg(
 ) : Leg()
 
 data class BusLeg(
-    val routeCode: String, val color: Int, val towards: String, val tripId: Long,
+    val routeCode: String, val color: Int, val towards: String, val tripId: Long, val directionIndex: Int,
     val boardNumber: Int, override val fromName: String, val boardMinutes: Int,
     val alightNumber: Int, override val toName: String, val alightMinutes: Int,
     val serviceDate: LocalDate, val intermediateStops: Int,

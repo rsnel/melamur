@@ -438,20 +438,39 @@ class MainActivity : Activity(), LocationListener {
     }
 
     /** Debug: synthesize a GPS path along the itinerary (walk legs straight, bus
-     *  legs through the trip's stops), interpolated to ~30 m spacing. */
+     *  legs along the route's road-snapped track between board and alight stops),
+     *  interpolated to ~30 m spacing. */
     private fun buildSimPoints(itin: Itinerary): List<DoubleArray> {
         val db = DbManager.db
         val byNum = allStops.associateBy { it.number }
+        val v = db?.versionFor(itin.serviceDate) ?: 1
+        val shapeCache = HashMap<String, it.snel.melamur.data.DirectionShape?>()
+        fun dirShape(code: String, dir: Int): it.snel.melamur.data.DirectionShape? =
+            shapeCache.getOrPut("$code/$dir") { db?.directionsForRoute(code, v)?.firstOrNull { it.directionIndex == dir } }
+
         val wps = ArrayList<DoubleArray>()  // [lat, lon] waypoints
         for (leg in itin.legs) when (leg) {
             is WalkLeg -> { wps.add(doubleArrayOf(leg.fromLat, leg.fromLon)); wps.add(doubleArrayOf(leg.toLat, leg.toLon)) }
             is BusLeg -> {
-                val ts = db?.tripStops(leg.tripId) ?: emptyList()
-                var inside = false
-                for (s in ts) {
-                    if (s.number == leg.boardNumber && s.minutes == leg.boardMinutes) inside = true
-                    if (inside) byNum[s.number]?.let { wps.add(doubleArrayOf(it.lat, it.lon)) }
-                    if (s.number == leg.alightNumber && s.minutes == leg.alightMinutes) break
+                val shape = dirShape(leg.routeCode, leg.directionIndex)
+                val b = byNum[leg.boardNumber]; val a = byNum[leg.alightNumber]
+                val b0 = if (shape != null && b != null) shape.shape.project(b.x, b.y)?.along else null
+                val a0 = if (shape != null && a != null && b0 != null) shape.shape.project(a.x, a.y, b0)?.along else null
+                if (shape != null && b0 != null && a0 != null && a0 > b0) {
+                    var along = b0                       // drive along the known track
+                    while (along < a0) {
+                        val p = shape.shape.at(along)
+                        wps.add(doubleArrayOf(Geo.lat(p[1]).toDouble(), Geo.lon(p[0]).toDouble())); along += 30f
+                    }
+                    a?.let { wps.add(doubleArrayOf(it.lat, it.lon)) }
+                } else {                                 // fallback: through the trip's stops
+                    val ts = db?.tripStops(leg.tripId) ?: emptyList()
+                    var inside = false
+                    for (s in ts) {
+                        if (s.number == leg.boardNumber && s.minutes == leg.boardMinutes) inside = true
+                        if (inside) byNum[s.number]?.let { wps.add(doubleArrayOf(it.lat, it.lon)) }
+                        if (s.number == leg.alightNumber && s.minutes == leg.alightMinutes) break
+                    }
                 }
             }
         }

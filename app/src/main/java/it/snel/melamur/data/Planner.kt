@@ -114,7 +114,7 @@ object Planner {
 
     private fun busLeg(dep: Departure, color: Int, trip: List<TripStop>, bi: Int, ai: Int, date: java.time.LocalDate): BusLeg {
         val b = trip[bi]; val a = trip[ai]
-        return BusLeg(dep.routeCode, color, dep.towards, dep.tripId,
+        return BusLeg(dep.routeCode, color, dep.towards, dep.tripId, dep.directionIndex,
             b.number ?: 0, b.name, b.minutes, a.number ?: 0, a.name, a.minutes, date, ai - bi - 1)
     }
 
