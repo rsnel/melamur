@@ -138,9 +138,12 @@ class MainActivity : Activity(), LocationListener {
         val bs = stops.map { it.asBusStop() }
         allStops = stops
         NavHub.stops = stops.associateBy { it.number }
+        val first = db.firstValidFrom()
+        val today = LocalDate.now(Malta.ZONE).toString()
         runOnUiThread {
             busStopsById = bs.associateBy { it.id }
             map.stops = bs
+            if (first != null && today < first) toast(getString(R.string.db_future, first))
             render()
         }
     }

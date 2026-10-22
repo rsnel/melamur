@@ -39,6 +39,10 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         return query("SELECT MIN(version_id) FROM dataset_version", emptyArray()) { it.getInt(0) }.firstOrNull() ?: 1
     }
 
+    /** Earliest service date any version applies to, or null if none. */
+    fun firstValidFrom(): String? =
+        query("SELECT MIN(valid_from) FROM dataset_version", emptyArray()) { if (it.isNull(0)) null else it.getString(0) }.firstOrNull()
+
     fun allStops(v: Int): List<Stop> = query(
         "SELECT stop_number,name,locality,lat,lon FROM stop " +
             "WHERE from_version<=? AND (to_version IS NULL OR to_version>?) AND lat IS NOT NULL AND lon IS NOT NULL",

@@ -30,6 +30,7 @@
     <string name="db_imported">Dataset imported</string>
     <string name="db_import_failed">Could not import: %1$s</string>
     <string name="db_none">No dataset loaded. Open the menu to import one.</string>
+    <string name="db_future">This timetable applies from %1$s; showing it as a preview — it may not match today\'s service.</string>
 
     <!-- stop / lines -->
     <string name="lines_at">Lines at this stop</string>
