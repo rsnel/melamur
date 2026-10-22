@@ -52,7 +52,9 @@ class MainActivity : Activity(), LocationListener {
     private var busStopsById: Map<String, BusStop> = emptyMap()
     private var places: List<MapView.PlaceLabel> = emptyList()
     private var streets: List<MapView.StreetLabel> = emptyList()
+    private var landmarks: List<MapView.PlaceLabel> = emptyList()
     private var pois: MutableList<Poi> = mutableListOf()
+    private var searchIndex: SearchIndex.Index? = null
 
     // planner selections
     private var from: Place? = null
@@ -79,12 +81,12 @@ class MainActivity : Activity(), LocationListener {
         map.onMapLongPress = { lat, lon, poi -> showLongPressMenu(lat, lon, poi) }
         destination.setOnClickListener { if (NavHub.snapshot.active || NavHub.snapshot.arrived) cancelNav() }
 
-        pois = PoiStore.load(this); map.pois = pois
+        pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
 
         Thread {
             val data = MapData(this)
-            val (pl, st) = loadLabels()
-            runOnUiThread { map.data = data; places = pl; streets = st }
+            val (pl, st, lm) = loadLabels()
+            runOnUiThread { map.data = data; places = pl; streets = st; landmarks = lm; rebuildIndex() }
         }.start()
 
         if (DbManager.isImported(this)) {
@@ -143,10 +145,13 @@ class MainActivity : Activity(), LocationListener {
         runOnUiThread {
             busStopsById = bs.associateBy { it.id }
             map.stops = bs
+            rebuildIndex()
             if (first != null && today < first) toast(getString(R.string.db_future, first))
             render()
         }
     }
+
+    private fun rebuildIndex() { searchIndex = SearchIndex.build(allStops, places, streets, landmarks, pois) }
 
     private fun stopFor(bs: BusStop): Stop? = allStops.firstOrNull { it.number.toString() == bs.id }
 
@@ -233,7 +238,7 @@ class MainActivity : Activity(), LocationListener {
                     1 -> { to = Place(poi.name, poi.lat, poi.lon); toast("Destination: ${poi.name}") }
                     2 -> AlertDialog.Builder(this).setMessage(R.string.poi_delete_confirm)
                         .setPositiveButton(R.string.poi_delete) { _, _ ->
-                            PoiStore.remove(this, poi.id); pois = PoiStore.load(this); map.pois = pois
+                            PoiStore.remove(this, poi.id); pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
                         }.setNegativeButton(R.string.close, null).show()
                 }
             }.show()
@@ -245,7 +250,7 @@ class MainActivity : Activity(), LocationListener {
         AlertDialog.Builder(this).setTitle(R.string.poi_store).setView(input)
             .setPositiveButton(R.string.poi_store) { _, _ ->
                 val name = input.text.toString().ifBlank { "POI" }
-                PoiStore.add(this, name, lat, lon); pois = PoiStore.load(this); map.pois = pois
+                PoiStore.add(this, name, lat, lon); pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
             }.setNegativeButton(R.string.close, null).show()
     }
 
@@ -268,12 +273,17 @@ class MainActivity : Activity(), LocationListener {
         list.adapter = adapter
         val dlg = AlertDialog.Builder(this).setTitle(R.string.search_title).setView(box)
             .setNegativeButton(R.string.close, null).create()
+        val handler = android.os.Handler(mainLooper)
+        var pending: Runnable? = null
         fun refresh() {
-            val r = SearchIndex.search(allStops, places, streets, pois, input.text.toString())
+            val r = searchIndex?.search(input.text.toString()) ?: emptyList()
             adapter.clear(); adapter.addAll(r); adapter.notifyDataSetChanged()
         }
         input.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) = refresh()
+            override fun afterTextChanged(s: android.text.Editable?) {
+                pending?.let { handler.removeCallbacks(it) }
+                val run = Runnable { refresh() }; pending = run; handler.postDelayed(run, 140)
+            }
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
@@ -466,7 +476,7 @@ class MainActivity : Activity(), LocationListener {
     override fun onProviderDisabled(p: String) {}
 
     // ---------------- labels for search
-    private fun loadLabels(): Pair<List<MapView.PlaceLabel>, List<MapView.StreetLabel>> = try {
+    private fun loadLabels(): Triple<List<MapView.PlaceLabel>, List<MapView.StreetLabel>, List<MapView.PlaceLabel>> = try {
         val root = org.json.JSONObject(assets.open("labels.json").bufferedReader().use { it.readText() })
         val pa = root.getJSONArray("places")
         val pl = List(pa.length()) { i ->
@@ -479,8 +489,13 @@ class MainActivity : Activity(), LocationListener {
             MapView.StreetLabel(Geo.x(o.getDouble("lon")), Geo.y(o.getDouble("lat")),
                 Geo.x(o.getDouble("lon2")), Geo.y(o.getDouble("lat2")), o.getString("n"))
         }
-        pl to st
-    } catch (e: Exception) { emptyList<MapView.PlaceLabel>() to emptyList() }
+        val la = root.optJSONArray("landmarks") ?: org.json.JSONArray()
+        val lm = List(la.length()) { i ->
+            val o = la.getJSONObject(i)
+            MapView.PlaceLabel(Geo.x(o.getDouble("lon")), Geo.y(o.getDouble("lat")), o.getString("n"), 3)
+        }
+        Triple(pl, st, lm)
+    } catch (e: Exception) { Triple(emptyList(), emptyList(), emptyList()) }
 
     // ---------------- bottom panel
     private fun render() {

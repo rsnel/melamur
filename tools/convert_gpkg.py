@@ -228,11 +228,40 @@ def main(gpkg, outdir):
             seen.add(key)
             streets.append({'n': name, 'lat': round(lat, 6), 'lon': round(lon, 6),
                             'lat2': round(lat2, 6), 'lon2': round(lon2, 6)})
+    # landmarks: named points of interest people search for (attractions,
+    # hotels, civic, parks, beaches, places of worship, ...). Excludes noise
+    # like benches, bins, post boxes, shops.
+    LAND_FCLASS = {'theme_park', 'attraction', 'museum', 'memorial', 'artwork', 'monument',
+                   'castle', 'ruins', 'fort', 'tower', 'viewpoint', 'lighthouse', 'archaeological',
+                   'zoo', 'gallery', 'tourist_info', 'hotel', 'hostel', 'guesthouse', 'motel',
+                   'camp_site', 'hospital', 'university', 'college', 'library', 'theatre', 'cinema',
+                   'arts_centre', 'marketplace', 'mall', 'department_store', 'supermarket', 'stadium',
+                   'sports_centre', 'park', 'garden', 'beach', 'marina', 'golf_course', 'water_park',
+                   'playground', 'town_hall', 'community_centre'}
+    SCL = 500.0
+    seen_l = set()
+    landmarks = []
+    for layer in ('gis_osm_pois_free', 'gis_osm_pois_a_free', 'gis_osm_pofw_free'):
+        worship = layer == 'gis_osm_pofw_free'
+        for (fc, name), r in geoms(c, f"select geom,fclass,name from {layer} where name is not null"):
+            if not worship and fc not in LAND_FCLASS:
+                continue
+            ring = r[0]
+            lon = sum(p[0] for p in ring) / len(ring)
+            lat = sum(p[1] for p in ring) / len(ring)
+            px, py = proj(lon, lat)
+            key = (name, int(px // SCL), int(py // SCL))
+            if key in seen_l:
+                continue
+            seen_l.add(key)
+            landmarks.append({'n': name, 'lat': round(lat, 6), 'lon': round(lon, 6)})
+
     with open(os.path.join(outdir, 'labels.json'), 'w') as f:
-        json.dump({'places': places, 'streets': streets}, f, ensure_ascii=False, separators=(',', ':'))
+        json.dump({'places': places, 'streets': streets, 'landmarks': landmarks},
+                  f, ensure_ascii=False, separators=(',', ':'))
 
     print('features', len(LAYERS), 'stops', len(stops), 'moved to left kerb', moved,
-          'places', len(places), 'street labels', len(streets),
+          'places', len(places), 'street labels', len(streets), 'landmarks', len(landmarks),
           'map.bin bytes', os.path.getsize(os.path.join(outdir, 'map.bin')))
 
 if __name__ == '__main__':
