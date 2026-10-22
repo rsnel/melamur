@@ -143,6 +143,51 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         arrayOf(code, "$v", "$v")
     ) { it.getStringOrNull(0) }.firstOrNull().let { parseColor(it, code) }
 
+    /** direction_index -> headsign (destination) for a route. */
+    fun directionNames(code: String, v: Int): Map<Int, String> = query(
+        "SELECT direction_index, COALESCE(destination, name) FROM direction " +
+            "WHERE route_code=? AND from_version<=? AND (to_version IS NULL OR to_version>?)",
+        arrayOf(code, "$v", "$v")
+    ) { it.getInt(0) to (it.getStringOrNull(1) ?: "") }.toMap()
+
+    /**
+     * Load all RAPTOR routes (patterns) valid for version [v] and weekday [bit]:
+     * trips grouped by the exact stop sequence they serve, with per-stop minutes.
+     */
+    fun loadPatterns(v: Int, bit: Int): List<RawRoute> {
+        val tts = query(
+            "SELECT id, route_code, direction_index FROM timetable " +
+                "WHERE from_version<=? AND (to_version IS NULL OR to_version>?) AND (weekdays & ?)<>0",
+            arrayOf("$v", "$v", "$bit")
+        ) { Triple(it.getLong(0), it.getString(1), it.getInt(2)) }
+        val patCache = HashMap<Long, List<IntArray>>()
+        val out = ArrayList<RawRoute>()
+        for ((ttId, code, dir) in tts) {
+            val seqStop = HashMap<Int, Int>()
+            query("SELECT seq, stop_number FROM timetable_stop WHERE timetable_id=?", arrayOf("$ttId")) {
+                if (!it.isNull(1)) seqStop[it.getInt(0)] = it.getInt(1); 0
+            }
+            val trips = query("SELECT id, first_minute, pattern_id FROM trip WHERE timetable_id=?", arrayOf("$ttId")) {
+                Triple(it.getLong(0), it.getInt(1), it.getLong(2))
+            }
+            val groups = LinkedHashMap<String, Pair<IntArray, ArrayList<RawTrip>>>()
+            for ((tid, first, pid) in trips) {
+                val pat = patCache.getOrPut(pid) {
+                    query("SELECT seq, delta FROM pattern_offset WHERE pattern_id=? ORDER BY seq", arrayOf("$pid")) {
+                        intArrayOf(it.getInt(0), it.getInt(1))
+                    }
+                }
+                val stopsL = ArrayList<Int>(); val minsL = ArrayList<Int>()
+                for (sd in pat) { val sn = seqStop[sd[0]] ?: continue; stopsL.add(sn); minsL.add(first + sd[1]) }
+                if (stopsL.size < 2) continue
+                val g = groups.getOrPut(stopsL.joinToString(",")) { stopsL.toIntArray() to ArrayList() }
+                g.second.add(RawTrip(tid, minsL.toIntArray()))
+            }
+            for ((_, g) in groups) out.add(RawRoute(code, dir, g.first, g.second.sortedBy { it.minutes.firstOrNull() ?: 0 }))
+        }
+        return out
+    }
+
     private fun Cursor.getStringOrNull(i: Int): String? = if (isNull(i)) null else getString(i)
 
     companion object {

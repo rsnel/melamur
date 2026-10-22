@@ -2,7 +2,6 @@ package it.snel.melamur.data
 
 import it.snel.melamur.map.Geo
 import java.time.LocalDateTime
-import kotlin.math.ceil
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -12,137 +11,131 @@ data class Place(val name: String, val lat: Double, val lon: Double) {
 }
 
 /**
- * Earliest-arrival journey planner over the MPT timetable.
- *
- * Heuristic and bounded (it runs on a phone, off the main thread): it walks
- * from the origin to nearby stops, takes the timetable to stops near the
- * destination, and considers at most ONE interchange (boarding again at the
- * stop where you alighted). It is not a full optimal RAPTOR/CSA search — good
- * enough to suggest realistic journeys; see docs for the limitations.
+ * Journey planner using RAPTOR with walking (see Raptor.kt). It finds stops
+ * within walking distance of the origin and destination, runs RAPTOR, and
+ * converts each Pareto round (a fewer-transfers / later-arrival trade-off) into
+ * an [Itinerary] with walk, bus and transfer legs. A direct walk is offered
+ * when the origin and destination are close.
  */
 object Planner {
-    private const val WALK_SPEED = 1.3           // m/s
-    private const val MAX_WALK_M = 1000.0
-    private const val NEAR_STOPS = 6
-    private const val WINDOW_MIN = 120           // only trips within 2 h of readiness
-    private const val MIN_TRANSFER_MIN = 2
-    private const val MAX_TRANSFER_POINTS = 12
-    private const val MAX_RESULTS = 6
+    private const val WALK_SPEED = RaptorData.WALK_SPEED
+    private const val MAX_ACCESS_M = 1000.0
+    private const val NEAR = 8
+    private const val DIRECT_WALK_M = 1500.0
 
+    @Volatile private var cacheKey = ""
+    @Volatile private var cache: RaptorData? = null
+
+    private fun data(db: MptDb, allStops: List<Stop>, v: Int, bit: Int): RaptorData {
+        val key = "$v/$bit"
+        cache?.let { if (cacheKey == key) return it }
+        val d = RaptorData.build(db.loadPatterns(v, bit), allStops)
+        cache = d; cacheKey = key; return d
+    }
+
+    private fun walkSec(m: Double) = (m / WALK_SPEED).roundToInt()
     private fun dist(ax: Float, ay: Float, bx: Float, by: Float) = hypot((ax - bx).toDouble(), (ay - by).toDouble())
-    private fun walkMin(meters: Double) = ceil(meters / WALK_SPEED / 60.0).toInt()
 
-    private class Near(val stop: Stop, val meters: Int, val walk: Int)
-
-    private fun near(place: Place, stops: List<Stop>): List<Near> =
-        stops.map { Near(it, dist(place.x, place.y, it.x, it.y).roundToInt(), 0) }
-            .filter { it.meters <= MAX_WALK_M }
-            .sortedBy { it.meters }.take(NEAR_STOPS)
-            .map { Near(it.stop, it.meters, walkMin(it.meters.toDouble())) }
+    /** Stops within walking range of a place, as [stopIdx, walkSec]. */
+    private fun near(d: RaptorData, p: Place): List<IntArray> {
+        val hits = ArrayList<IntArray>()
+        for (i in 0 until d.nStops) {
+            if (d.lat[i].isNaN()) continue
+            val m = dist(p.x, p.y, Geo.x(d.lon[i]), Geo.y(d.lat[i]))
+            if (m <= MAX_ACCESS_M) hits.add(intArrayOf(i, walkSec(m)))
+        }
+        return hits.sortedBy { it[1] }.take(NEAR)
+    }
 
     fun plan(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime): List<Itinerary> {
         val date = departAt.toLocalDate()
         val v = db.versionFor(date)
+        val bit = Malta.weekdayBit(date)
         val departMin = departAt.hour * 60 + departAt.minute
-        val origins = near(from, allStops)
-        val dests = near(to, allStops).associateBy { it.stop.number }
-        if (origins.isEmpty() || dests.isEmpty()) return emptyList()
+        val d = data(db, allStops, v, bit)
+        val access = near(d, from)
+        val egress = near(d, to).associate { it[0] to it[1] }
+        if (access.isEmpty() || egress.isEmpty()) return directOnly(from, to, departMin, date)
 
-        val results = ArrayList<Itinerary>()
-        val transferPoints = HashMap<Int, Triple<Int, TripStop, FirstLeg>>() // stop# -> (arrMin, stop, first leg)
-
-        for (o in origins) {
-            val ready = departMin + o.walk
-            val deps = db.departures(o.stop.number, date, v).filter { it.minutes in ready..(ready + WINDOW_MIN) }
-            // earliest trip per route+direction is enough for a first pass
-            val seen = HashSet<String>()
-            for (dep in deps) {
-                if (!seen.add(dep.routeCode + "/" + dep.directionIndex)) continue
-                val trip = db.tripStops(dep.tripId)
-                val bi = trip.indexOfFirst { it.number == o.stop.number && it.minutes == dep.minutes }
-                if (bi < 0) continue
-                val color = db.routeColor(dep.routeCode, v)
-                for (j in bi + 1 until trip.size) {
-                    val s = trip[j]; val num = s.number ?: continue
-                    val d = dests[num]
-                    if (d != null) {
-                        val arrive = s.minutes + d.walk
-                        results.add(directItinerary(o, dep, color, trip, bi, j, d, from, to, date))
-                    }
-                    // remember the earliest time we can be at this stop, for one transfer
-                    val cur = transferPoints[num]
-                    if (cur == null || s.minutes < cur.first)
-                        transferPoints[num] = Triple(s.minutes, s, FirstLeg(o, dep, color, trip, bi, j))
-                }
-            }
+        val journeys = Raptor.query(d, access, egress, departMin)
+        val byNum = allStops.associateBy { it.number }
+        val dirNames = HashMap<String, Map<Int, String>>()
+        val colors = HashMap<String, Pair<Map<Int, Int>, Int>>()
+        fun towards(code: String, dir: Int) = dirNames.getOrPut(code) { db.directionNames(code, v) }[dir] ?: ""
+        fun colorOf(code: String, dir: Int): Int {
+            val (m, fb) = colors.getOrPut(code) { db.shapeColors(code, v) to db.routeColor(code, v) }
+            return m[dir] ?: fb
         }
 
-        // one interchange: board again where we alighted
-        transferPoints.entries.sortedBy { it.value.first }.take(MAX_TRANSFER_POINTS).forEach { (num, tp) ->
-            val (arrMin, tStop, first) = tp
-            if (dests.containsKey(num)) return@forEach // already a direct destination
-            val deps2 = db.departures(num, date, v).filter { it.minutes in (arrMin + MIN_TRANSFER_MIN)..(arrMin + WINDOW_MIN) }
-            val seen2 = HashSet<String>()
-            for (dep2 in deps2) {
-                if (!seen2.add(dep2.routeCode + "/" + dep2.directionIndex)) continue
-                if (dep2.routeCode == first.dep.routeCode) continue
-                val trip2 = db.tripStops(dep2.tripId)
-                val bi2 = trip2.indexOfFirst { it.number == num && it.minutes == dep2.minutes }
-                if (bi2 < 0) continue
-                val color2 = db.routeColor(dep2.routeCode, v)
-                for (j in bi2 + 1 until trip2.size) {
-                    val s = trip2[j]; val n2 = s.number ?: continue
-                    val d = dests[n2] ?: continue
-                    results.add(transferItinerary(first, dep2, color2, trip2, bi2, j, tStop, d, from, to, date))
-                    break
-                }
+        val out = ArrayList<Itinerary>()
+        for (j in journeys) if (j.segs.isNotEmpty())
+            out.add(toItinerary(d, j, from, to, byNum, date, departMin, ::towards, ::colorOf))
+        // a direct walk, when it is short enough
+        val wd = dist(from.x, from.y, to.x, to.y)
+        if (wd <= DIRECT_WALK_M) out.add(walkItinerary(from, to, departMin, date, wd))
+
+        return out.distinctBy { sig(it) }
+            .sortedWith(compareBy({ it.arriveMinutes }, { it.transfers }))
+            .take(8)
+    }
+
+    private fun directOnly(from: Place, to: Place, departMin: Int, date: java.time.LocalDate): List<Itinerary> {
+        val wd = dist(from.x, from.y, to.x, to.y)
+        return if (wd <= DIRECT_WALK_M * 2) listOf(walkItinerary(from, to, departMin, date, wd)) else emptyList()
+    }
+
+    private fun walkItinerary(from: Place, to: Place, departMin: Int, date: java.time.LocalDate, meters: Double): Itinerary {
+        val sec = walkSec(meters)
+        val leg = WalkLeg(from.name, to.name, meters.roundToInt(), sec, from.lat, from.lon, to.lat, to.lon)
+        return Itinerary(listOf(leg), departMin, departMin + (sec + 59) / 60, date)
+    }
+
+    private fun toItinerary(
+        d: RaptorData, j: RJourney, from: Place, to: Place, byNum: Map<Int, Stop>,
+        date: java.time.LocalDate, departMin: Int,
+        towards: (String, Int) -> String, colorOf: (String, Int) -> Int,
+    ): Itinerary {
+        val legs = ArrayList<Leg>()
+        fun coord(stopIdx: Int): DoubleArray = doubleArrayOf(d.lat[stopIdx], d.lon[stopIdx])
+        fun name(num: Int) = byNum[num]?.display ?: "Stop #$num"
+
+        // access walk origin -> first stop
+        val accC = coord(j.accessStop)
+        legs.add(WalkLeg(from.name, name(d.stopNums[j.accessStop]),
+            dist(from.x, from.y, Geo.x(accC[1]), Geo.y(accC[0])).roundToInt(), j.accessSec,
+            from.lat, from.lon, accC[0], accC[1]))
+
+        var firstBoardMin = -1
+        for (seg in j.segs) when (seg) {
+            is SRide -> {
+                val (code, dir) = d.routeMeta[seg.route]
+                val bIdx = d.routeStops[seg.route][seg.boardPos]; val aIdx = d.routeStops[seg.route][seg.alightPos]
+                val bNum = d.stopNums[bIdx]; val aNum = d.stopNums[aIdx]
+                val bMin = d.routeTripsMin[seg.route][seg.trip][seg.boardPos]
+                val aMin = d.routeTripsMin[seg.route][seg.trip][seg.alightPos]
+                if (firstBoardMin < 0) firstBoardMin = bMin
+                legs.add(BusLeg(code, colorOf(code, dir), towards(code, dir),
+                    d.routeTripIds[seg.route][seg.trip], dir,
+                    bNum, name(bNum), bMin, aNum, name(aNum), aMin, date, seg.alightPos - seg.boardPos - 1))
+            }
+            is STransfer -> {
+                val f = coord(seg.fromStop); val t = coord(seg.toStop)
+                legs.add(WalkLeg(name(d.stopNums[seg.fromStop]), name(d.stopNums[seg.toStop]),
+                    dist(Geo.x(f[1]), Geo.y(f[0]), Geo.x(t[1]), Geo.y(t[0])).roundToInt(), seg.sec,
+                    f[0], f[1], t[0], t[1]))
             }
         }
+        // egress walk last stop -> destination
+        val egC = coord(j.egressStop)
+        legs.add(WalkLeg(name(d.stopNums[j.egressStop]), to.name,
+            dist(Geo.x(egC[1]), Geo.y(egC[0]), to.x, to.y).roundToInt(), j.egressSec,
+            egC[0], egC[1], to.lat, to.lon))
 
-        return results.distinctBy { sig(it) }
-            .sortedWith(compareBy({ it.arriveMinutes }, { it.transfers }, { it.departMinutes.let { d -> -d } }))
-            .take(MAX_RESULTS)
-    }
-
-    private class FirstLeg(val o: Near, val dep: Departure, val color: Int,
-                           val trip: List<TripStop>, val bi: Int, val ai: Int)
-
-    private fun walkLeg(from: Place, name: String, lat: Double, lon: Double): WalkLeg {
-        val m = dist(from.x, from.y, Geo.x(lon), Geo.y(lat)).roundToInt()
-        return WalkLeg(from.name, name, m, (m / WALK_SPEED).roundToInt(), from.lat, from.lon, lat, lon)
-    }
-
-    private fun busLeg(dep: Departure, color: Int, trip: List<TripStop>, bi: Int, ai: Int, date: java.time.LocalDate): BusLeg {
-        val b = trip[bi]; val a = trip[ai]
-        return BusLeg(dep.routeCode, color, dep.towards, dep.tripId, dep.directionIndex,
-            b.number ?: 0, b.name, b.minutes, a.number ?: 0, a.name, a.minutes, date, ai - bi - 1)
-    }
-
-    private fun directItinerary(o: Near, dep: Departure, color: Int, trip: List<TripStop>, bi: Int, ai: Int,
-                                d: Near, from: Place, to: Place, date: java.time.LocalDate): Itinerary {
-        val b = trip[bi]; val a = trip[ai]
-        val legs = listOf(
-            walkLeg(from, b.name, o.stop.lat, o.stop.lon),
-            busLeg(dep, color, trip, bi, ai, date),
-            WalkLeg(a.name, to.name, d.meters, d.walk * 60, d.stop.lat, d.stop.lon, to.lat, to.lon),
-        )
-        return Itinerary(legs, dep.minutes - o.walk, a.minutes + d.walk, date)
-    }
-
-    private fun transferItinerary(first: FirstLeg, dep2: Departure, color2: Int, trip2: List<TripStop>,
-                                  bi2: Int, ai2: Int, tStop: TripStop, d: Near, from: Place, to: Place,
-                                  date: java.time.LocalDate): Itinerary {
-        val b1 = first.trip[first.bi]
-        val a2 = trip2[ai2]
-        val legs = listOf(
-            walkLeg(from, b1.name, first.o.stop.lat, first.o.stop.lon),
-            busLeg(first.dep, first.color, first.trip, first.bi, first.ai, date),
-            busLeg(dep2, color2, trip2, bi2, ai2, date),
-            WalkLeg(a2.name, to.name, d.meters, d.walk * 60, d.stop.lat, d.stop.lon, to.lat, to.lon),
-        )
-        return Itinerary(legs, first.dep.minutes - first.o.walk, a2.minutes + d.walk, date)
+        val dep = if (firstBoardMin >= 0) firstBoardMin - (j.accessSec + 59) / 60 else departMin
+        return Itinerary(legs, dep, j.arriveMin, date)
     }
 
     private fun sig(it: Itinerary): String =
-        it.busLegs.joinToString("|") { "${it.routeCode}:${it.boardNumber}>${it.alightNumber}@${it.boardMinutes}" }
+        if (it.busLegs.isEmpty()) "walk"
+        else it.busLegs.joinToString("|") { "${it.routeCode}:${it.boardNumber}>${it.alightNumber}@${it.boardMinutes}" }
 }
