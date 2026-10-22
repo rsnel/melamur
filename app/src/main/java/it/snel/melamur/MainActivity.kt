@@ -495,7 +495,9 @@ class MainActivity : Activity(), LocationListener {
             MapView.PlaceLabel(Geo.x(o.getDouble("lon")), Geo.y(o.getDouble("lat")), o.getString("n"), 3)
         }
         Triple(pl, st, lm)
-    } catch (e: Exception) { Triple(emptyList(), emptyList(), emptyList()) }
+    } catch (e: Exception) {
+        Triple(emptyList<MapView.PlaceLabel>(), emptyList<MapView.StreetLabel>(), emptyList<MapView.PlaceLabel>())
+    }
 
     // ---------------- bottom panel
     private fun render() {

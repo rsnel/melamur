@@ -31,7 +31,7 @@ object SearchIndex {
             .replace('-', ' ').replace('/', ' ').replace("  +".toRegex(), " ")
             .lowercase().trim()
 
-    private class Entry(val folded: String, val number: Int?, val kindOrder: Int, val result: SearchResult)
+    internal class Entry(val folded: String, val number: Int?, val kindOrder: Int, val result: SearchResult)
 
     class Index internal constructor(private val entries: List<Entry>) {
         fun search(query: String, limit: Int = 40): List<SearchResult> {
