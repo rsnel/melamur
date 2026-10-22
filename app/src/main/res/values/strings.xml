@@ -18,7 +18,11 @@
     <string name="menu_map">Map</string>
     <string name="menu_planner">Planner</string>
     <string name="menu_reload">Reload database</string>
+    <string name="menu_debug">Debug: simulate journey</string>
     <string name="menu_about">About</string>
+    <string name="simulate">Simulate</string>
+    <string name="sim_need">Open Planner, search a journey, then Simulate it.</string>
+    <string name="sim_running">Simulating journey…</string>
 
     <!-- database -->
     <string name="db_pick_title">Select the MelaMur dataset</string>

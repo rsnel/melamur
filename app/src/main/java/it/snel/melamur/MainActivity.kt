@@ -60,6 +60,7 @@ class MainActivity : Activity(), LocationListener {
     private var from: Place? = null
     private var to: Place? = null
     private var departWhen: LocalDateTime? = null
+    private var lastItinerary: Itinerary? = null
 
     private val white = Color.WHITE
     private val grey = Color.rgb(176, 176, 176)
@@ -300,14 +301,16 @@ class MainActivity : Activity(), LocationListener {
     // ---------------- burger menu
     private fun showMenu() {
         val items = arrayOf(getString(R.string.menu_map), getString(R.string.menu_planner),
-            getString(R.string.menu_reload), getString(R.string.privacy), getString(R.string.menu_about))
+            getString(R.string.menu_reload), getString(R.string.menu_debug),
+            getString(R.string.privacy), getString(R.string.menu_about))
         AlertDialog.Builder(this).setItems(items) { _, w ->
             when (w) {
                 0 -> { map.routes = emptyList(); map.activeRouteId = null; map.invalidate() }
                 1 -> showPlanner()
                 2 -> reloadMenu()
-                3 -> showConsent(false)
-                4 -> showAbout()
+                3 -> lastItinerary?.let { startNavigation(it, simulate = true) } ?: toast(getString(R.string.sim_need))
+                4 -> showConsent(false)
+                5 -> showAbout()
             }
         }.show()
     }
@@ -383,8 +386,10 @@ class MainActivity : Activity(), LocationListener {
     }
 
     private fun confirmNavigate(itin: Itinerary) {
+        lastItinerary = itin
         AlertDialog.Builder(this).setTitle(R.string.navigate).setMessage(summary(itin))
-            .setPositiveButton(R.string.navigate) { _, _ -> startNavigation(itin) }
+            .setPositiveButton(R.string.navigate) { _, _ -> startNavigation(itin, simulate = false) }
+            .setNeutralButton(R.string.simulate) { _, _ -> startNavigation(itin, simulate = true) }
             .setNegativeButton(R.string.close, null).show()
     }
 
@@ -413,16 +418,61 @@ class MainActivity : Activity(), LocationListener {
     }
 
     // ---------------- navigation
-    private fun startNavigation(itin: Itinerary) {
-        if (!ensureLocation()) { toast("Location permission needed"); return }
+    private fun startNavigation(itin: Itinerary, simulate: Boolean) {
+        if (!simulate && !ensureLocation()) { toast("Location permission needed"); return }
+        lastItinerary = itin
         NavHub.itinerary = itin
         if (NavHub.stops.isEmpty()) NavHub.stops = allStops.associateBy { it.number }
+        NavHub.simulate = simulate
+        NavHub.simPoints = if (simulate) buildSimPoints(itin) else emptyList()
+        if (simulate) {
+            toast(getString(R.string.sim_running))
+            NavHub.simPoints.firstOrNull()?.let { map.setMyLocation(it[0], it[1], 5f, it[2].toFloat()); map.centerOnMe() }
+        }
         startForegroundService(Intent(this, NavigationService::class.java))
         render()
     }
 
     private fun cancelNav() {
         stopService(Intent(this, NavigationService::class.java)); NavHub.clear(); render()
+    }
+
+    /** Debug: synthesize a GPS path along the itinerary (walk legs straight, bus
+     *  legs through the trip's stops), interpolated to ~30 m spacing. */
+    private fun buildSimPoints(itin: Itinerary): List<DoubleArray> {
+        val db = DbManager.db
+        val byNum = allStops.associateBy { it.number }
+        val wps = ArrayList<DoubleArray>()  // [lat, lon] waypoints
+        for (leg in itin.legs) when (leg) {
+            is WalkLeg -> { wps.add(doubleArrayOf(leg.fromLat, leg.fromLon)); wps.add(doubleArrayOf(leg.toLat, leg.toLon)) }
+            is BusLeg -> {
+                val ts = db?.tripStops(leg.tripId) ?: emptyList()
+                var inside = false
+                for (s in ts) {
+                    if (s.number == leg.boardNumber && s.minutes == leg.boardMinutes) inside = true
+                    if (inside) byNum[s.number]?.let { wps.add(doubleArrayOf(it.lat, it.lon)) }
+                    if (s.number == leg.alightNumber && s.minutes == leg.alightMinutes) break
+                }
+            }
+        }
+        // interpolate between waypoints in projected metres, with bearings
+        val pts = ArrayList<DoubleArray>()
+        val sp = 30.0
+        for (i in 0 until wps.size - 1) {
+            val ax = Geo.x(wps[i][1]).toDouble(); val ay = Geo.y(wps[i][0]).toDouble()
+            val bx = Geo.x(wps[i + 1][1]).toDouble(); val by = Geo.y(wps[i + 1][0]).toDouble()
+            val d = Math.hypot(bx - ax, by - ay)
+            if (d < 1.0) continue
+            val brg = Geo.bearing((bx - ax).toFloat(), (by - ay).toFloat()).toDouble()
+            val n = Math.max(1, (d / sp).toInt())
+            for (k in 0 until n) {
+                val t = k.toDouble() / n
+                val x = ax + (bx - ax) * t; val y = ay + (by - ay) * t
+                pts.add(doubleArrayOf(Geo.lat(y.toFloat()), Geo.lon(x.toFloat()), brg))
+            }
+        }
+        wps.lastOrNull()?.let { pts.add(doubleArrayOf(it[0], it[1], pts.lastOrNull()?.get(2) ?: 0.0)) }
+        return pts
     }
 
     // ---------------- consent (GDPR) — Wi-Fi crowd-GPS is disabled for now
@@ -502,6 +552,7 @@ class MainActivity : Activity(), LocationListener {
     // ---------------- bottom panel
     private fun render() {
         val n = NavHub.snapshot
+        if (n.simulated && n.lat != null && n.lon != null) map.setMyLocation(n.lat, n.lon, 5f, n.bearing)
         if (n.active || n.arrived) {
             status.text = if (n.arrived) "" else "${n.distanceM} m"
             nextStop.text = n.instruction; nextStop.visibility = View.VISIBLE

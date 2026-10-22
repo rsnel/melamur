@@ -27,18 +27,23 @@ import it.snel.melamur.data.WalkLeg
 data class NavSnapshot(
     val active: Boolean = false, val instruction: String = "", val detail: String = "",
     val distanceM: Int = 0, val pressStop: Boolean = false, val arrived: Boolean = false,
+    val lat: Double? = null, val lon: Double? = null, val bearing: Float? = null,
+    val simulated: Boolean = false,
 )
 
 object NavHub {
     @Volatile var itinerary: Itinerary? = null
     @Volatile var stops: Map<Int, Stop> = emptyMap()   // stop number -> coords
+    // debug simulation: a pre-built path of [lat, lon, bearing] points to replay as GPS
+    @Volatile var simulate = false
+    @Volatile var simPoints: List<DoubleArray> = emptyList()
     @Volatile var snapshot = NavSnapshot(); private set
     private val listeners = mutableSetOf<() -> Unit>()
     private val main = Handler(Looper.getMainLooper())
     fun listen(l: () -> Unit) { listeners += l }
     fun unlisten(l: () -> Unit) { listeners -= l }
     internal fun publish(s: NavSnapshot) { snapshot = s; main.post { listeners.forEach { it() } } }
-    fun clear() { itinerary = null; publish(NavSnapshot()) }
+    fun clear() { itinerary = null; simulate = false; simPoints = emptyList(); publish(NavSnapshot()) }
 }
 
 /**
@@ -53,6 +58,8 @@ class NavigationService : Service(), LocationListener {
     private lateinit var lm: LocationManager
     private var leg = 0
     private var warned = false
+    private val handler = Handler(Looper.getMainLooper())
+    private var simIndex = 0
 
     override fun onBind(i: Intent?) = null
 
@@ -63,13 +70,33 @@ class NavigationService : Service(), LocationListener {
         val n = note(getString(R.string.nav_starting), "")
         if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIF, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         else startForeground(NOTIF, n)
-        try { lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, this, Looper.getMainLooper()) }
-        catch (e: SecurityException) { /* no permission: stop */ stopSelf() }
+        if (NavHub.simulate && NavHub.simPoints.isNotEmpty()) {
+            handler.post(simTick)  // debug: replay a synthesized journey instead of GPS
+        } else {
+            try { lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000L, 0f, this, Looper.getMainLooper()) }
+            catch (e: SecurityException) { stopSelf() }
+        }
     }
 
     override fun onDestroy() {
+        handler.removeCallbacks(simTick)
         runCatching { lm.removeUpdates(this) }
         super.onDestroy()
+    }
+
+    private val simTick = object : Runnable {
+        override fun run() {
+            val pts = NavHub.simPoints
+            if (NavHub.itinerary == null || simIndex >= pts.size) { arrive(); return }
+            val p = pts[simIndex++]
+            val loc = Location("sim").apply {
+                latitude = p[0]; longitude = p[1]; accuracy = 5f; bearing = p[2].toFloat()
+                time = System.currentTimeMillis()
+                elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
+            }
+            onLocationChanged(loc)
+            if (NavHub.itinerary != null && simIndex < pts.size) handler.postDelayed(this, SIM_MS)
+        }
     }
 
     private fun legTarget(l: Any): DoubleArray? = when (l) {
@@ -97,7 +124,9 @@ class NavigationService : Service(), LocationListener {
             press = true
             if (!warned) { warned = true; alert(getString(R.string.press_stop), l.toName) }
         }
-        NavHub.publish(NavSnapshot(true, instr, detail, d.toInt(), press))
+        NavHub.publish(NavSnapshot(true, instr, detail, d.toInt(), press,
+            lat = loc.latitude, lon = loc.longitude,
+            bearing = if (loc.hasBearing()) loc.bearing else null, simulated = NavHub.simulate))
         update(instr, "${d.toInt()} m")
         if (d < reach) advance()
     }
@@ -149,6 +178,7 @@ class NavigationService : Service(), LocationListener {
         private const val CH = "nav"; private const val CH_ALERT = "alerts"
         private const val NOTIF = 10; private const val NOTIF_ALERT = 11
         private const val PRESS_DIST = 350f
+        private const val SIM_MS = 300L   // debug playback tick
         private val VIBE = longArrayOf(0, 400, 200, 400, 200, 800)
     }
 }
