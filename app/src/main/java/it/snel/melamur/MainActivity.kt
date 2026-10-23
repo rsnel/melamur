@@ -95,6 +95,11 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var tabMisc: ImageButton
     private lateinit var timeBtn: Button
     private lateinit var planBtn: Button
+    private lateinit var navBusy: View
+    private lateinit var navStatus: TextView
+    private lateinit var navCancel: Button
+    private var searching = false
+    private var showLegStops = false
     private val tabOn = Color.rgb(238, 0, 0)
     private val tabOff = Color.rgb(60, 60, 60)
     private val iconOff = Color.rgb(150, 150, 150)
@@ -120,6 +125,9 @@ class MainActivity : Activity(), LocationListener {
         tabMap = findViewById(R.id.tabMap); tabText = findViewById(R.id.tabText); tabMisc = findViewById(R.id.tabMisc)
         textPanel = findViewById(R.id.textPanel); textContent = findViewById(R.id.textContent)
         timeBtn = findViewById(R.id.timeBtn); planBtn = findViewById(R.id.planBtn)
+        navBusy = findViewById(R.id.navBusy); navStatus = findViewById(R.id.navStatus)
+        navCancel = findViewById(R.id.navCancel)
+        navCancel.setOnClickListener { cancelNav() }
         tabExplore.setOnClickListener { setMode(Mode.EXPLORE) }
         tabNavigate.setOnClickListener { setMode(Mode.NAVIGATE) }
         tabMap.setOnClickListener { setView(ViewKind.MAP) }
@@ -173,13 +181,23 @@ class MainActivity : Activity(), LocationListener {
         tabText.imageTintList = ColorStateList.valueOf(if (viewKind == ViewKind.TEXT) tabOn else iconOff)
         // center-me lives just above the bottom bar; only useful on the map
         centerBtn.visibility = if (viewKind == ViewKind.MAP) View.VISIBLE else View.GONE
-        // Explore uses the single search bar; Navigate uses the start/destination planner.
-        if (::navInputs.isInitialized) {
-            val nav = mode == Mode.NAVIGATE
-            searchBar.visibility = if (nav) View.GONE else View.VISIBLE
-            navInputs.visibility = if (nav) View.VISIBLE else View.GONE
-            if (nav) syncNavInputs()
-        }
+        refreshNavBar()
+    }
+
+    /**
+     * Top bar for the current mode: Explore shows the search bar; Navigate shows
+     * the planner inputs, the busy panel while planning, or a single cancel
+     * button while a route is being navigated.
+     */
+    private fun refreshNavBar() {
+        if (!::navInputs.isInitialized) return
+        val nav = mode == Mode.NAVIGATE
+        val active = NavHub.snapshot.active || NavHub.snapshot.arrived
+        searchBar.visibility = if (nav) View.GONE else View.VISIBLE
+        navCancel.visibility = if (nav && active) View.VISIBLE else View.GONE
+        navBusy.visibility = if (nav && !active && searching) View.VISIBLE else View.GONE
+        navInputs.visibility = if (nav && !active && !searching) View.VISIBLE else View.GONE
+        if (navInputs.visibility == View.VISIBLE) syncNavInputs()
     }
 
     private fun refreshTimeLabel() {
@@ -319,10 +337,14 @@ class MainActivity : Activity(), LocationListener {
             val trip = deps.firstOrNull { it.minutes >= nowMin } ?: deps.lastOrNull()
             val stops = trip?.let { db.tripStops(it.tripId) } ?: emptyList()
             val col = dir?.color ?: db.routeColor(code, v)
+            val byNum = allStops.associateBy { it.number }
             runOnUiThread {
                 textContent.addView(tv("$code  →  ${dir?.name ?: ""}", col, 18f, true))
                 textContent.addView(tv("Trip departing ${trip?.let { Malta.hhmm(it.minutes) } ?: "—"}", grey, 13f))
-                for (s in stops) textContent.addView(tv("${Malta.hhmm(s.minutes)}    ${s.name}", white, 15f))
+                for (s in stops) {
+                    val nm = s.number?.let { byNum[it]?.display } ?: s.name
+                    textContent.addView(tv("${Malta.hhmm(s.minutes)}    $nm", white, 15f))
+                }
                 if (stops.isEmpty()) textContent.addView(tv("No trips found for this time.", grey))
             }
         }.start()
@@ -354,14 +376,49 @@ class MainActivity : Activity(), LocationListener {
         }
         textContent.addView(tv(getString(R.string.text_route), white, 17f, true))
         textContent.addView(tv("${Malta.hhmm(itin.departMinutes)} → ${Malta.hhmm(itin.arriveMinutes)}  (${itin.arriveMinutes - itin.departMinutes} min)", grey, 14f))
+        textContent.addView(smallBtn(if (showLegStops) "Hide stops" else "Show stops") {
+            showLegStops = !showLegStops; buildTextPanel()
+        })
+        val db = DbManager.db
+        if (!showLegStops || db == null) {
+            addLegRows(itin, emptyMap())
+            textContent.addView(smallBtn(getString(R.string.navigate)) { confirmNavigate(itin) })
+        } else {
+            // load the intermediate stops of each bus leg off the UI thread, then render in order
+            Thread {
+                val mids = HashMap<Long, List<TripStop>>()
+                for (bl in itin.busLegs) mids[bl.tripId] = intermediateStops(db, bl)
+                runOnUiThread {
+                    addLegRows(itin, mids)
+                    textContent.addView(smallBtn(getString(R.string.navigate)) { confirmNavigate(itin) })
+                }
+            }.start()
+        }
+    }
+
+    private fun addLegRows(itin: Itinerary, mids: Map<Long, List<TripStop>>) {
+        val byNum = allStops.associateBy { it.number }
         for (leg in itin.legs) when (leg) {
             is WalkLeg -> textContent.addView(tv("Walk ${leg.meters} m to ${leg.toName}", white, 15f))
-            is BusLeg -> textContent.addView(clickRow(listOf(leg.color),
-                "${Malta.hhmm(leg.boardMinutes)}  ${leg.routeCode} → ${leg.towards}",
-                "${leg.fromName}  →  ${leg.toName}  (${Malta.hhmm(leg.alightMinutes)})") {})
+            is BusLeg -> {
+                textContent.addView(clickRow(listOf(leg.color),
+                    "${Malta.hhmm(leg.boardMinutes)}  ${leg.routeCode} → ${leg.towards}",
+                    "${leg.fromName}  →  ${leg.toName}  (${Malta.hhmm(leg.alightMinutes)})") {})
+                mids[leg.tripId]?.forEach { s ->
+                    val nm = s.number?.let { byNum[it]?.display } ?: s.name
+                    textContent.addView(tv("      ${Malta.hhmm(s.minutes)}   $nm", grey, 13f))
+                }
+            }
             else -> {}
         }
-        textContent.addView(smallBtn(getString(R.string.navigate)) { confirmNavigate(itin) })
+    }
+
+    /** Stops strictly between board and alight on a bus leg's trip. */
+    private fun intermediateStops(db: MptDb, bl: BusLeg): List<TripStop> {
+        val ts = db.tripStops(bl.tripId)
+        val b = ts.indexOfFirst { it.number == bl.boardNumber && it.minutes == bl.boardMinutes }
+        val a = ts.indexOfLast { it.number == bl.alightNumber && it.minutes == bl.alightMinutes }
+        return if (b in 0 until a) ts.subList(b + 1, a).toList() else emptyList()
     }
 
     override fun onResume() { super.onResume(); NavHub.listen(navListener); startOwnLocation(); render() }
@@ -636,20 +693,21 @@ class MainActivity : Activity(), LocationListener {
         if (f == null || t == null) { toast(getString(R.string.planner_need)); return }
         val db = DbManager.db ?: return
         val depart = departWhen ?: LocalDateTime.now(Malta.ZONE)
-        planBtn.isEnabled = false
+        searching = true; navStatus.text = "Planning…"; refreshNavBar()
+        val onProg: (String) -> Unit = { msg -> runOnUiThread { if (searching) navStatus.text = msg } }
         Thread {
             val res: List<Itinerary>; val stats: String
             if (Settings.debug(this)) {
-                val cmp = runCatching { Planner.compare(db, allStops, f, t, depart) }.getOrDefault(emptyList())
+                val cmp = runCatching { Planner.compare(db, allStops, f, t, depart, onProg) }.getOrDefault(emptyList())
                 res = cmp.firstOrNull { it.engine == Engine.RAPTOR }?.itineraries ?: emptyList()
                 stats = statsText(cmp)
             } else {
                 val eng = Settings.engine(this)
                 val t0 = System.nanoTime()
-                res = runCatching { Planner.plan(db, allStops, f, t, depart, eng) }.getOrDefault(emptyList())
+                res = runCatching { Planner.plan(db, allStops, f, t, depart, eng, onProg) }.getOrDefault(emptyList())
                 stats = "%s   %.1f ms · %d options".format(eng.name, (System.nanoTime() - t0) / 1_000_000.0, res.size)
             }
-            runOnUiThread { planBtn.isEnabled = true; showItineraries(res, stats) }
+            runOnUiThread { searching = false; refreshNavBar(); showItineraries(res, stats) }
         }.start()
     }
 

@@ -60,21 +60,30 @@ object Planner {
         }
 
     fun plan(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime,
-             engine: Engine = Engine.RAPTOR): List<Itinerary> {
-        val ctx = prepare(db, allStops, from, to, departAt) ?: return directOnly(from, to, departAt)
-        return finalize(ctx, runEngine(engine, ctx.d, ctx.access, ctx.egress, ctx.departMin), from, to)
+             engine: Engine = Engine.RAPTOR, onProgress: ((String) -> Unit)? = null): List<Itinerary> {
+        onProgress?.invoke("Loading timetable…")
+        val ctx = prepare(db, allStops, from, to, departAt, onProgress) ?: return directOnly(from, to, departAt)
+        onProgress?.invoke("Running ${engine.name} + walking…")
+        val res = finalize(ctx, runEngine(engine, ctx.d, ctx.access, ctx.egress, ctx.departMin), from, to)
+        onProgress?.invoke("Found ${res.size} option${if (res.size == 1) "" else "s"}")
+        return res
     }
 
     /** Run all three engines, timing each; itineraries are converted identically. */
-    fun compare(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime): List<EngineResult> {
-        val ctx = prepare(db, allStops, from, to, departAt) ?: return Engine.values().map {
+    fun compare(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime,
+                onProgress: ((String) -> Unit)? = null): List<EngineResult> {
+        onProgress?.invoke("Loading timetable…")
+        val ctx = prepare(db, allStops, from, to, departAt, onProgress) ?: return Engine.values().map {
             EngineResult(it, 0.0, directOnly(from, to, departAt))
         }
         return Engine.values().map { e ->
+            onProgress?.invoke("Running ${e.name}…")
             val t0 = System.nanoTime()
             val journeys = runEngine(e, ctx.d, ctx.access, ctx.egress, ctx.departMin)
             val ms = (System.nanoTime() - t0) / 1_000_000.0
-            EngineResult(e, ms, finalize(ctx, journeys, from, to))
+            val r = EngineResult(e, ms, finalize(ctx, journeys, from, to))
+            onProgress?.invoke("%s: %.0f ms → %s".format(e.name, ms, r.bestArrive?.let { Malta.hhmm(it) } ?: "—"))
+            r
         }
     }
 
@@ -82,12 +91,16 @@ object Planner {
                       val egress: Map<Int, Int>, val departMin: Int, val date: java.time.LocalDate,
                       val byNum: Map<Int, Stop>)
 
-    private fun prepare(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime): Ctx? {
+    private fun prepare(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime,
+                        onProgress: ((String) -> Unit)? = null): Ctx? {
         val date = departAt.toLocalDate()
         val v = db.versionFor(date); val bit = Malta.weekdayBit(date)
         val departMin = departAt.hour * 60 + departAt.minute
+        onProgress?.invoke("Building the network…")
         val d = data(db, allStops, v, bit)
+        onProgress?.invoke("${d.nStops} stops in service")
         val access = near(d, from); val egress = near(d, to).associate { it[0] to it[1] }
+        onProgress?.invoke("${access.size} stops near start · ${egress.size} near destination")
         if (access.isEmpty() || egress.isEmpty()) return null
         return Ctx(d, db, v, access, egress, departMin, date, allStops.associateBy { it.number })
     }

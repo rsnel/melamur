@@ -64,6 +64,25 @@
             </LinearLayout>
         </LinearLayout>
 
+        <!-- Navigate while planning: linear throbber + what the algorithm is doing -->
+        <LinearLayout android:id="@+id/navBusy"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" android:orientation="vertical"
+            android:background="@drawable/panel_bg" android:padding="12dp" android:visibility="gone">
+            <TextView android:id="@+id/navStatus"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:textColor="@color/mm_white" android:textSize="14sp" />
+            <ProgressBar android:id="@+id/navProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" android:indeterminate="true" />
+        </LinearLayout>
+
+        <!-- Navigate while a route is active: a single cancel button -->
+        <Button android:id="@+id/navCancel" style="@style/MmButton"
+            android:layout_width="match_parent" android:layout_height="46dp"
+            android:layout_marginTop="6dp" android:text="@string/nav_cancel" android:visibility="gone" />
+
         <ListView android:id="@+id/searchResults"
             android:layout_width="match_parent" android:layout_height="300dp"
             android:layout_marginTop="6dp" android:background="@color/mm_panel"
