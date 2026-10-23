@@ -3,6 +3,7 @@ package it.snel.melamur.data
 import it.snel.melamur.map.Geo
 import it.snel.melamur.map.MapView
 import java.text.Normalizer
+import kotlin.math.hypot
 
 /** A unified search hit: a stop, an address/landmark from OSM, or a stored POI. */
 data class SearchResult(
@@ -61,14 +62,31 @@ object SearchIndex {
         landmarks: List<MapView.PlaceLabel>, pois: List<Poi>,
     ): Index {
         val e = ArrayList<Entry>(stops.size + places.size + streets.size + landmarks.size + pois.size)
+        // municipality lookup: nearest stop's locality (stops are dense and carry it),
+        // via a coarse grid so a landmark can be labelled with its town.
+        val cell = 1500f
+        val grid = HashMap<String, ArrayList<Stop>>()
+        for (s in stops) grid.getOrPut("${(s.x / cell).toInt()},${(s.y / cell).toInt()}") { ArrayList() }.add(s)
+        fun municipality(x: Float, y: Float): String? {
+            val gx = (x / cell).toInt(); val gy = (y / cell).toInt()
+            var best: Stop? = null; var bd = Float.MAX_VALUE
+            for (dx in -1..1) for (dy in -1..1) grid["${gx + dx},${gy + dy}"]?.forEach { s ->
+                val d = hypot(s.x - x, s.y - y); if (d < bd) { bd = d; best = s }
+            }
+            return best?.locality?.takeIf { it.isNotBlank() }
+        }
         for (s in stops) e.add(Entry(
             fold("${s.name} ${s.locality ?: ""} ${s.number}"), s.number, 0,
             SearchResult(SearchResult.Kind.STOP, s.display,
                 "Stop #${s.number}" + (s.locality?.let { " · $it" } ?: ""), s.lat, s.lon, s.number)))
         for (p in pois) e.add(Entry(fold(p.name), null, 1,
             SearchResult(SearchResult.Kind.POI, p.name, "Saved place", p.lat, p.lon)))
-        for (p in landmarks) e.add(Entry(fold(p.name), null, 2,
-            SearchResult(SearchResult.Kind.LANDMARK, p.name, "Landmark", Geo.lat(p.y), Geo.lon(p.x))))
+        for (p in landmarks) {
+            val muni = municipality(p.x, p.y)
+            e.add(Entry(fold("${p.name} ${muni ?: ""}"), null, 2,
+                SearchResult(SearchResult.Kind.LANDMARK, p.name,
+                    muni?.let { "$it · Landmark" } ?: "Landmark", Geo.lat(p.y), Geo.lon(p.x))))
+        }
         for (p in places) e.add(Entry(fold(p.name), null, 3,
             SearchResult(SearchResult.Kind.PLACE, p.name, "Place", Geo.lat(p.y), Geo.lon(p.x))))
         val seen = HashSet<String>()
