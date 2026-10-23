@@ -59,6 +59,11 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         finishPt = finish?.let { floatArrayOf(Geo.x(it[1]), Geo.y(it[0])) }
         invalidate()
     }
+
+    // a pin dropped at the currently selected search result
+    private var searchPt: FloatArray? = null
+    fun setSearchPin(lat: Double, lon: Double) { searchPt = floatArrayOf(Geo.x(lon), Geo.y(lat)); invalidate() }
+    fun clearSearchPin() { if (searchPt != null) { searchPt = null; invalidate() } }
     var onStopTapped: ((BusStop) -> Unit)? = null
     /** Long-press on the map: reports the world position and the POI hit, if any. */
     var onMapLongPress: ((lat: Double, lon: Double, poi: Poi?) -> Unit)? = null
@@ -202,6 +207,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val flagOutline = stroke(Color.rgb(20, 20, 20)).apply { strokeWidth = 1.5f * dp }
     private val checkerDark = fill(Color.rgb(20, 20, 20))
     private val checkerLight = fill(Color.WHITE)
+    // selected-search-result pin: a blue teardrop, distinct from start (green) / POI (amber)
+    private val searchFill = fill(Color.rgb(33, 118, 243))
+    private val searchRing = stroke(Color.WHITE).apply { strokeWidth = 2.5f * dp }
     private val pin = Path()
     private val occupied = HashSet<Long>() // label collision grid, rebuilt per frame
     private val stopLabelCells = HashSet<String>() // stops whose name won a slot this frame
@@ -327,6 +335,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             c.drawPath(diamond, poiFill); c.drawPath(diamond, poiStroke)
             if (scale > 1.5f) c.drawText(p.name, pt[0] + s + 3 * dp, pt[1] + 4 * dp, poiLabel)
         }
+        searchPt?.let { s -> pt[0] = s[0]; pt[1] = s[1]; matrix.mapPoints(pt); drawPin(c, pt[0], pt[1], searchFill, searchRing, 10 * dp) }
         startPt?.let { s -> pt[0] = s[0]; pt[1] = s[1]; matrix.mapPoints(pt); drawStartPin(c, pt[0], pt[1]) }
         finishPt?.let { f -> pt[0] = f[0]; pt[1] = f[1]; matrix.mapPoints(pt); drawFinishFlag(c, pt[0], pt[1]) }
         me?.let { m ->
@@ -338,16 +347,16 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         }
     }
 
-    /** Green teardrop pin with a white centre; its tip sits exactly on (x, y). */
-    private fun drawStartPin(c: Canvas, x: Float, y: Float) {
-        val r = 9 * dp
+    /** Teardrop pin with a white centre; its tip sits exactly on (x, y). */
+    private fun drawPin(c: Canvas, x: Float, y: Float, fillP: Paint, ringP: Paint, r: Float) {
         val cyc = y - 1.8f * r
         pin.reset()
         pin.addCircle(x, cyc, r, Path.Direction.CW)
         pin.moveTo(x - r * 0.62f, cyc + r * 0.6f); pin.lineTo(x, y); pin.lineTo(x + r * 0.62f, cyc + r * 0.6f); pin.close()
-        c.drawPath(pin, startFill); c.drawPath(pin, startRing)
+        c.drawPath(pin, fillP); c.drawPath(pin, ringP)
         c.drawCircle(x, cyc, r * 0.4f, checkerLight)
     }
+    private fun drawStartPin(c: Canvas, x: Float, y: Float) = drawPin(c, x, y, startFill, startRing, 9 * dp)
 
     /** Chequered finish flag on a pole whose foot sits on (x, y). */
     private fun drawFinishFlag(c: Canvas, x: Float, y: Float) {

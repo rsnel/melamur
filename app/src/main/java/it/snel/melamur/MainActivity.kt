@@ -257,6 +257,7 @@ class MainActivity : Activity(), LocationListener {
     }
 
     private fun selectLine(code: String, dir: Int = 0) {
+        map.clearSearchPin()
         selectedLine = code; selectedDir = dir; mode = Mode.EXPLORE
         lineTextTime = LocalDateTime.now(Malta.ZONE)
         updateMapForMode(); refreshView()
@@ -640,7 +641,9 @@ class MainActivity : Activity(), LocationListener {
     }
 
     private fun handleMapPick(r: SearchResult) {
+        if (viewKind != ViewKind.MAP) setView(ViewKind.MAP)
         map.centerOn(BusStop(r.stopNumber?.toString() ?: "x", r.label, r.lat, r.lon, null))
+        map.setSearchPin(r.lat, r.lon)
         if (r.kind == SearchResult.Kind.STOP && r.stopNumber != null)
             allStops.firstOrNull { it.number == r.stopNumber }?.let { showStop(it) }
     }
