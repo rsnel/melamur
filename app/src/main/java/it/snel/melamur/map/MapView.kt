@@ -193,6 +193,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val checkerLight = fill(Color.WHITE)
     private val pin = Path()
     private val occupied = HashSet<Long>() // label collision grid, rebuilt per frame
+    private val stopLabelCells = HashSet<String>() // stops whose name won a slot this frame
     private val meFill = fill(Color.WHITE)
     private val meRing = stroke(Color.rgb(238, 0, 0)).apply { strokeWidth = 4 * dp }
     private val meAcc = fill(Color.argb(50, 238, 0, 0))
@@ -240,7 +241,20 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         }
         // ---- text labels (screen space, collision-avoided)
         occupied.clear()
-        if (scale > 3.5f) {
+        // Stop names take priority: reserve their label cells first, so street and
+        // place names only fill the grid cells left over.
+        stopLabelCells.clear()
+        val showStopLabels = scale > STOP_LABEL_SCALE
+        if (scale > MIN_STOP_SCALE && showStopLabels) {
+            for (s in stops) {
+                if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue
+                pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
+                if (pt[0] < 0 || pt[0] > width || pt[1] < 0 || pt[1] > height) continue
+                val r = (if (s.id == nextStopId || s.id == destinationStopId) 7 else 4) * dp
+                if (reserve(pt[0] + r + 3 * dp, pt[1] + 4 * dp)) stopLabelCells.add(s.id)
+            }
+        }
+        if (scale > STREET_LABEL_SCALE) {
             streetPaint.textSize = 11 * dp
             for (s in streets) {
                 if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue
@@ -269,7 +283,6 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         }
 
         if (scale > MIN_STOP_SCALE) {
-            val showLabels = scale > 3f
             for (s in stops) {
                 if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue
                 pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
@@ -285,7 +298,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 }
                 stopFill.color = if (s.id == destinationStopId) Color.rgb(238, 0, 0) else Color.WHITE
                 c.drawCircle(pt[0], pt[1], r, stopFill); c.drawCircle(pt[0], pt[1], r, stopRing)
-                if (showLabels || hl) c.drawText(s.name, pt[0] + r + 3 * dp, pt[1] + 4 * dp, label)
+                if (hl || s.id in stopLabelCells) c.drawText(s.name, pt[0] + r + 3 * dp, pt[1] + 4 * dp, label)
             }
         }
         for (p in pois) {
@@ -347,6 +360,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
 
     companion object {
         const val MIN_STOP_SCALE = 0.25f
+        // stop names show from this zoom (lowered so they appear earlier); streets a bit later
+        private const val STOP_LABEL_SCALE = 1.2f
+        private const val STREET_LABEL_SCALE = 2.0f
         // indexed by place rank 0..4 (capital/city, town, village/suburb, hamlet, locality)
         private val PLACE_MIN_SCALE = floatArrayOf(0f, 0.02f, 0.12f, 0.5f, 1.5f)
         private val PLACE_TEXT = floatArrayOf(17f, 15f, 13f, 12f, 11f)
