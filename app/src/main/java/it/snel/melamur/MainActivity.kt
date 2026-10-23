@@ -370,7 +370,7 @@ class MainActivity : Activity(), LocationListener {
         textContent.addView(c1)
         val c2 = LinearLayout(this)
         c2.addView(smallBtn(getString(R.string.text_all_lines)) { selectedLine = null; clearRoutes(); buildTextPanel() })
-        c2.addView(smallBtn(getString(R.string.text_show_map)) { setView(ViewKind.MAP) })
+        c2.addView(smallBtn(getString(R.string.text_show_map)) { setView(ViewKind.MAP); showRouteOnMap(code, fit = true) })
         textContent.addView(c2)
         Thread {
             val v = db.versionFor(lineTextTime.toLocalDate())
@@ -584,7 +584,8 @@ class MainActivity : Activity(), LocationListener {
         }.start()
     }
 
-    private fun showRouteOnMap(code: String) {
+    /** Draw a line on the map; with [fit], also zoom so the whole line is visible. */
+    private fun showRouteOnMap(code: String, fit: Boolean = false) {
         val db = DbManager.db ?: return
         Thread {
             val v = db.versionFor(LocalDate.now(Malta.ZONE))
@@ -594,7 +595,21 @@ class MainActivity : Activity(), LocationListener {
                 RouteDirection(it.directionIndex.toString(), it.name, it.shape, it.stopNumbers, it.color)
             })
             val gfx = RouteRenderer.build(route, busStopsById)
-            runOnUiThread { map.itinPaths = emptyList(); map.routes = listOf(gfx); map.activeRouteId = code; map.invalidate() }
+            // extent of all directions' shapes
+            var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
+            for (d in dirs) {
+                for (x in d.shape.xs) { if (x < x0) x0 = x; if (x > x1) x1 = x }
+                for (y in d.shape.ys) { if (y < y0) y0 = y; if (y > y1) y1 = y }
+            }
+            runOnUiThread {
+                map.itinPaths = emptyList(); map.routes = listOf(gfx); map.activeRouteId = code; map.invalidate()
+                if (fit && x0 <= x1) {
+                    // keep the route clear of the overlays: zoom buttons (top-right),
+                    // center-me (bottom-right) and the scale bar (bottom-left)
+                    val d = resources.displayMetrics.density
+                    map.fitBounds(x0, y0, x1, y1, 24 * d, 24 * d, 76 * d, 88 * d)
+                }
+            }
         }.start()
     }
 

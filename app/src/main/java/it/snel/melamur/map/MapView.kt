@@ -94,6 +94,22 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         cx = Geo.x(lon); cy = Geo.y(lat); scale = sc; follow = false; invalidate()
     }
 
+    /**
+     * Centre and zoom so the world box (x0,y0)-(x1,y1) fits inside the view
+     * minus the given screen paddings (px), e.g. to keep it clear of overlay
+     * buttons. Leaves follow mode.
+     */
+    fun fitBounds(x0: Float, y0: Float, x1: Float, y1: Float, padL: Float, padT: Float, padR: Float, padB: Float) {
+        if (width == 0 || height == 0) { post { fitBounds(x0, y0, x1, y1, padL, padT, padR, padB) }; return }
+        val aw = (width - padL - padR).coerceAtLeast(1f); val ah = (height - padT - padB).coerceAtLeast(1f)
+        scale = min(aw / maxOf(x1 - x0, 1f), ah / maxOf(y1 - y0, 1f)).coerceIn(0.01f, 25f)
+        // put the box centre at the centre of the free area
+        val sx = padL + aw / 2f; val sy = padT + ah / 2f
+        cx = (x0 + x1) / 2f - (sx - width / 2f) / scale
+        cy = (y0 + y1) / 2f + (sy - height / 2f) / scale
+        follow = false; invalidate()
+    }
+
     /** Zoom by [f] around the screen centre (keeps follow mode). */
     fun zoomBy(f: Float) = zoomAt(width / 2f, height / 2f, f)
 
