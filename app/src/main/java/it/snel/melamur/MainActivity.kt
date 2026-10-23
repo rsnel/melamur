@@ -275,7 +275,13 @@ class MainActivity : Activity(), LocationListener {
             for (leg in itin.legs) when (leg) {
                 is WalkLeg -> {
                     val p = Path()
-                    p.moveTo(Geo.x(leg.fromLon), Geo.y(leg.fromLat)); p.lineTo(Geo.x(leg.toLon), Geo.y(leg.toLat))
+                    val rp = Preloader.walkGraph?.route(leg.fromLat, leg.fromLon, leg.toLat, leg.toLon)
+                    if (rp != null && rp.pts.size >= 4) {
+                        p.moveTo(rp.pts[0], rp.pts[1])
+                        var i = 2; while (i < rp.pts.size) { p.lineTo(rp.pts[i], rp.pts[i + 1]); i += 2 }
+                    } else {
+                        p.moveTo(Geo.x(leg.fromLon), Geo.y(leg.fromLat)); p.lineTo(Geo.x(leg.toLon), Geo.y(leg.toLat))
+                    }
                     paths.add(MapView.ItinPath(p, 0, true))
                 }
                 is BusLeg -> {
@@ -437,7 +443,11 @@ class MainActivity : Activity(), LocationListener {
     private fun addLegRows(itin: Itinerary, mids: Map<Long, List<TripStop>>) {
         val byNum = allStops.associateBy { it.number }
         for (leg in itin.legs) when (leg) {
-            is WalkLeg -> textContent.addView(tv("Walk ${leg.meters} m to ${leg.toName}", white, 15f))
+            is WalkLeg -> {
+                val m = Preloader.walkGraph?.route(leg.fromLat, leg.fromLon, leg.toLat, leg.toLon)?.meters?.toInt()
+                    ?: leg.meters
+                textContent.addView(tv("Walk $m m to ${leg.toName}", white, 15f))
+            }
             is BusLeg -> {
                 textContent.addView(clickRow(listOf(leg.color),
                     "${Malta.hhmm(leg.boardMinutes)}  ${leg.routeCode} → ${leg.towards}",

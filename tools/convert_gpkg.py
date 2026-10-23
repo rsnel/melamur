@@ -113,6 +113,9 @@ ROAD_STYLE = {
 BUS_ROADS = {'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary',
              'secondary_link', 'tertiary', 'tertiary_link', 'unclassified',
              'residential', 'living_street', 'busway', 'service'}
+# classes a pedestrian may use; written UN-simplified to walk.bin so shared OSM
+# junction vertices line up and the app can node them into a routing graph
+WALK_ROADS = set(ROAD_STYLE.keys())
 LANDUSE_STYLE = {'residential': 2, 'industrial': 2, 'commercial': 2, 'retail': 2,
                  'park': 3, 'grass': 3, 'forest': 3, 'meadow': 3, 'scrub': 3,
                  'farmland': 4, 'orchard': 4, 'vineyard': 4, 'allotments': 4}
@@ -130,6 +133,7 @@ def main(gpkg, outdir):
     for _, r in geoms(c, "select geom from gis_osm_buildings_a_free"):
         add(0, 6, r, 1.5)
     roads = []
+    walk_ways = []   # un-simplified walkable ways, int metres, for walk.bin
     for (fc, oneway), r in geoms(c, "select geom,fclass,oneway from gis_osm_roads_free"):
         if fc.startswith('track'):
             fc = 'path'
@@ -138,6 +142,18 @@ def main(gpkg, outdir):
         if fc in BUS_ROADS:
             for ring in r:
                 roads.append((fc, oneway, [proj(*q) for q in ring]))
+        if fc in WALK_ROADS:
+            for ring in r:
+                w = []
+                for q in ring:
+                    x, y = proj(*q)
+                    xi, yi = int(round(x)), int(round(y))
+                    if not (-32767 < xi < 32767 and -32767 < yi < 32767):
+                        continue
+                    if not w or w[-1] != (xi, yi):
+                        w.append((xi, yi))
+                if len(w) >= 2:
+                    walk_ways.append(w)
 
     os.makedirs(outdir, exist_ok=True)
     with open(os.path.join(outdir, 'map.bin'), 'wb') as f:
@@ -145,6 +161,20 @@ def main(gpkg, outdir):
         for layer, style, p in LAYERS:
             f.write(struct.pack('<BBH', layer, style, len(p)))
             f.write(struct.pack('<%dh' % (2 * len(p)), *[v for q in p for v in q]))
+
+    # ---- walk.bin: walkable ways, un-simplified, for the app's foot router.
+    # Ways are split into chunks of <=65535 points sharing a boundary vertex.
+    def chunks(w):
+        i = 0
+        while i < len(w):
+            yield w[i:i + 65535]
+            i += 65535 - 1   # overlap one vertex so the chunks stay connected
+    walk_out = [ck for w in walk_ways for ck in chunks(w) if len(ck) >= 2]
+    with open(os.path.join(outdir, 'walk.bin'), 'wb') as f:
+        f.write(b'MLWK'); f.write(struct.pack('<ddI', LAT0, LON0, len(walk_out)))
+        for w in walk_out:
+            f.write(struct.pack('<H', len(w)))
+            f.write(struct.pack('<%dh' % (2 * len(w)), *[v for q in w for v in q]))
 
     # ---- spatial grid of road segments for snapping
     G = 100.0
@@ -262,7 +292,8 @@ def main(gpkg, outdir):
 
     print('features', len(LAYERS), 'stops', len(stops), 'moved to left kerb', moved,
           'places', len(places), 'street labels', len(streets), 'landmarks', len(landmarks),
-          'map.bin bytes', os.path.getsize(os.path.join(outdir, 'map.bin')))
+          'map.bin bytes', os.path.getsize(os.path.join(outdir, 'map.bin')),
+          'walk ways', len(walk_out), 'walk.bin bytes', os.path.getsize(os.path.join(outdir, 'walk.bin')))
 
 if __name__ == '__main__':
     main(sys.argv[1], sys.argv[2])

@@ -5,6 +5,7 @@ import it.snel.melamur.data.DbManager
 import it.snel.melamur.map.Geo
 import it.snel.melamur.map.MapData
 import it.snel.melamur.map.MapView
+import it.snel.melamur.map.WalkGraph
 
 /**
  * Warms up the expensive map assets while the splash animation plays, so the
@@ -17,6 +18,9 @@ object Preloader {
         private set
     @Volatile var labels: Triple<List<MapView.PlaceLabel>, List<MapView.StreetLabel>, List<MapView.PlaceLabel>>? = null
         private set
+    @Volatile var walkGraph: WalkGraph? = null
+        private set
+    private var walkTried = false
 
     /** Kick off preparation in the background (idempotent). Call from the splash. */
     fun start(ctx: Context) {
@@ -24,6 +28,7 @@ object Preloader {
         Thread {
             runCatching { getLabels(app) }   // small: finish first so labels are ready once mapData is
             runCatching { getMapData(app) }  // the heavy parse
+            runCatching { getWalkGraph(app) }  // foot-routing graph (absent walk.bin -> null)
             runCatching { if (DbManager.db == null && DbManager.isImported(app)) DbManager.openExisting(app) }
         }.start()
     }
@@ -35,6 +40,12 @@ object Preloader {
     @Synchronized
     fun getLabels(ctx: Context): Triple<List<MapView.PlaceLabel>, List<MapView.StreetLabel>, List<MapView.PlaceLabel>> =
         labels ?: loadLabels(ctx.applicationContext).also { labels = it }
+
+    @Synchronized
+    fun getWalkGraph(ctx: Context): WalkGraph? {
+        if (!walkTried) { walkTried = true; walkGraph = WalkGraph.load(ctx.applicationContext) }
+        return walkGraph
+    }
 
     private fun loadLabels(ctx: Context): Triple<List<MapView.PlaceLabel>, List<MapView.StreetLabel>, List<MapView.PlaceLabel>> = try {
         val root = org.json.JSONObject(ctx.assets.open("labels.json").bufferedReader().use { it.readText() })
