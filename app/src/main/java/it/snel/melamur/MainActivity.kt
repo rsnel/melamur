@@ -547,7 +547,7 @@ class MainActivity : Activity(), LocationListener {
                     .setView(android.widget.ScrollView(this).apply { addView(box) })
                     .setPositiveButton(R.string.nav_from) { _, _ -> navFromMap(place, true) }
                     .setNeutralButton(R.string.nav_to) { _, _ -> navFromMap(place, false) }
-                    .setNegativeButton(R.string.close, null).create()
+                    .create()   // no close button; tap outside (or Back) dismisses
                 dlg.show()
                 // navigate-from / navigate-to greyed out for now
                 dlg.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = false
