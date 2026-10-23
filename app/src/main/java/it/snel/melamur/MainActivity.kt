@@ -549,9 +549,11 @@ class MainActivity : Activity(), LocationListener {
                     .setNeutralButton(R.string.nav_to) { _, _ -> navFromMap(place, false) }
                     .create()   // no close button; tap outside (or Back) dismisses
                 dlg.show()
-                // navigate-from / navigate-to greyed out for now
-                dlg.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = false
-                dlg.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = false
+                // navigate-from / navigate-to are available while planning, but
+                // greyed out while a route is actively being navigated
+                val navActive = NavHub.snapshot.active || NavHub.snapshot.arrived
+                dlg.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = !navActive
+                dlg.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = !navActive
             }
         }.start()
     }
