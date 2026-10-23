@@ -8,6 +8,7 @@ import android.app.DatePickerDialog
 import android.app.TimePickerDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.location.Location
 import android.location.LocationListener
@@ -68,12 +69,33 @@ class MainActivity : Activity(), LocationListener {
     private val white = Color.WHITE
     private val grey = Color.rgb(176, 176, 176)
 
+    // modes (role) × views, orthogonal
+    enum class Mode { EXPLORE, NAVIGATE }
+    enum class ViewKind { MAP, TEXT }
+    private var mode = Mode.EXPLORE
+    private var viewKind = ViewKind.MAP
+    private var selectedLine: String? = null         // Explore: the line shown
+    private var selectedDir = 0
+    private var currentItinerary: Itinerary? = null  // Navigate: the planned route
+    private var lineTextTime: LocalDateTime = LocalDateTime.now(Malta.ZONE)
+    private lateinit var panel: View
+    private lateinit var textPanel: android.widget.ScrollView
+    private lateinit var textContent: LinearLayout
+    private lateinit var planFab: Button
+    private lateinit var tabExplore: Button
+    private lateinit var tabNavigate: Button
+    private lateinit var tabMap: Button
+    private lateinit var tabText: Button
+    private val tabOn = Color.rgb(238, 0, 0)
+    private val tabOff = Color.rgb(60, 60, 60)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         map = findViewById(R.id.map)
         status = findViewById(R.id.status); nextStop = findViewById(R.id.nextStop)
         destination = findViewById(R.id.destination); alert = findViewById(R.id.alert)
+        panel = findViewById(R.id.panel)
         lm = getSystemService(LocationManager::class.java)
 
         findViewById<Button>(R.id.center).setOnClickListener {
@@ -81,11 +103,16 @@ class MainActivity : Activity(), LocationListener {
         }
         searchBar = findViewById(R.id.searchBar); searchResults = findViewById(R.id.searchResults)
         setupSearchBar()
-        findViewById<Button>(R.id.tabMap).setOnClickListener {
-            map.routes = emptyList(); map.activeRouteId = null; map.invalidate(); hideSearch()
-        }
-        findViewById<Button>(R.id.tabPlan).setOnClickListener { showPlanner() }
+        tabExplore = findViewById(R.id.tabExplore); tabNavigate = findViewById(R.id.tabNavigate)
+        tabMap = findViewById(R.id.tabMap); tabText = findViewById(R.id.tabText)
+        textPanel = findViewById(R.id.textPanel); textContent = findViewById(R.id.textContent)
+        planFab = findViewById(R.id.planFab)
+        tabExplore.setOnClickListener { setMode(Mode.EXPLORE) }
+        tabNavigate.setOnClickListener { setMode(Mode.NAVIGATE) }
+        tabMap.setOnClickListener { setView(ViewKind.MAP) }
+        tabText.setOnClickListener { setView(ViewKind.TEXT) }
         findViewById<Button>(R.id.tabMisc).setOnClickListener { showMisc() }
+        planFab.setOnClickListener { showPlanner() }
         map.onStopTapped = { bs -> stopFor(bs)?.let { showStop(it) } }
         map.onMapLongPress = { lat, lon, poi -> showLongPressMenu(lat, lon, poi) }
         destination.setOnClickListener { if (NavHub.snapshot.active || NavHub.snapshot.arrived) cancelNav() }
@@ -105,7 +132,154 @@ class MainActivity : Activity(), LocationListener {
             promptImport()
         }
         requestLocationPerms()
-        render()
+        refreshView()
+    }
+
+    // ---------------- modes (Explore/Navigate) × views (Map/Text)
+    private fun setMode(m: Mode) { mode = m; updateMapForMode(); refreshView() }
+    private fun setView(v: ViewKind) { viewKind = v; hideSearch(); refreshView() }
+
+    private fun refreshTabs() {
+        tabExplore.backgroundTintList = ColorStateList.valueOf(if (mode == Mode.EXPLORE) tabOn else tabOff)
+        tabNavigate.backgroundTintList = ColorStateList.valueOf(if (mode == Mode.NAVIGATE) tabOn else tabOff)
+        tabMap.backgroundTintList = ColorStateList.valueOf(if (viewKind == ViewKind.MAP) tabOn else tabOff)
+        tabText.backgroundTintList = ColorStateList.valueOf(if (viewKind == ViewKind.TEXT) tabOn else tabOff)
+        planFab.visibility = if (mode == Mode.NAVIGATE && viewKind == ViewKind.MAP && !NavHub.snapshot.active)
+            View.VISIBLE else View.GONE
+    }
+
+    private fun refreshView() {
+        if (viewKind == ViewKind.TEXT) { textPanel.visibility = View.VISIBLE; buildTextPanel() }
+        else textPanel.visibility = View.GONE
+        refreshTabs(); render()
+    }
+
+    private fun clearRoutes() { map.routes = emptyList(); map.activeRouteId = null; map.invalidate() }
+
+    private fun updateMapForMode() {
+        when (mode) {
+            Mode.EXPLORE -> selectedLine?.let { showRouteOnMap(it) } ?: clearRoutes()
+            Mode.NAVIGATE -> currentItinerary?.let { drawItinerary(it) } ?: clearRoutes()
+        }
+    }
+
+    private fun selectLine(code: String) {
+        selectedLine = code; selectedDir = 0; mode = Mode.EXPLORE
+        lineTextTime = LocalDateTime.now(Malta.ZONE)
+        updateMapForMode(); refreshView()
+    }
+
+    private fun drawItinerary(itin: Itinerary) {
+        val db = DbManager.db ?: return
+        Thread {
+            val v = db.versionFor(LocalDate.now(Malta.ZONE))
+            val gfx = ArrayList<it.snel.melamur.map.RouteGfx>()
+            for (bl in itin.busLegs) {
+                val ds = db.directionsForRoute(bl.routeCode, v).firstOrNull { it.directionIndex == bl.directionIndex } ?: continue
+                val route = BusRoute(bl.routeCode, bl.routeCode, ds.color,
+                    listOf(RouteDirection(ds.directionIndex.toString(), ds.name, ds.shape, ds.stopNumbers, ds.color)))
+                gfx.add(RouteRenderer.build(route, busStopsById))
+            }
+            runOnUiThread { map.routes = gfx; map.activeRouteId = null; map.invalidate() }
+        }.start()
+    }
+
+    // ---------------- text view
+    private fun tv(s: String, color: Int = white, size: Float = 15f, bold: Boolean = false) = TextView(this).apply {
+        text = s; setTextColor(color); textSize = size
+        if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
+        val p = (4 * resources.displayMetrics.density).toInt(); setPadding(0, p, 0, p)
+    }
+    private fun smallBtn(label: String, onClick: () -> Unit) = Button(this).apply {
+        text = label; isAllCaps = false; setTextColor(white); backgroundTintList = ColorStateList.valueOf(tabOff)
+        setOnClickListener { onClick() }
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            .apply { marginEnd = (6 * resources.displayMetrics.density).toInt() }
+    }
+    private fun clickRow(colors: List<Int>, line1: String, line2: String, onClick: () -> Unit): View =
+        colorRow(colors, line1, line2).apply { setOnClickListener { onClick() } }
+
+    private fun buildTextPanel() {
+        textContent.removeAllViews()
+        if (DbManager.db == null) { textContent.addView(tv(getString(R.string.db_none))); return }
+        when (mode) { Mode.EXPLORE -> buildExploreText(); Mode.NAVIGATE -> buildNavigateText() }
+    }
+
+    private fun buildExploreText() {
+        val db = DbManager.db ?: return
+        val code = selectedLine
+        if (code == null) {
+            textContent.addView(tv(getString(R.string.text_select_line), white, 17f, true))
+            Thread {
+                val v = db.versionFor(LocalDate.now(Malta.ZONE)); val lines = db.allLines(v)
+                runOnUiThread { for (l in lines) textContent.addView(clickRow(listOf(l.color), l.code, l.name) { selectLine(l.code) }) }
+            }.start()
+            return
+        }
+        val c1 = LinearLayout(this)
+        c1.addView(smallBtn(getString(R.string.text_earlier)) { rollLine(-1) })
+        c1.addView(smallBtn(getString(R.string.text_later)) { rollLine(1) })
+        c1.addView(smallBtn(getString(R.string.text_flip)) { selectedDir = 1 - selectedDir; updateMapForMode(); buildTextPanel() })
+        textContent.addView(c1)
+        val c2 = LinearLayout(this)
+        c2.addView(smallBtn(getString(R.string.text_all_lines)) { selectedLine = null; clearRoutes(); buildTextPanel() })
+        c2.addView(smallBtn(getString(R.string.text_show_map)) { setView(ViewKind.MAP) })
+        textContent.addView(c2)
+        Thread {
+            val v = db.versionFor(lineTextTime.toLocalDate())
+            val dirs = db.directionsForRoute(code, v)
+            val dir = dirs.getOrNull(selectedDir) ?: dirs.firstOrNull()
+            val firstStop = dir?.stopNumbers?.firstOrNull()?.toIntOrNull()
+            val nowMin = lineTextTime.hour * 60 + lineTextTime.minute
+            val deps = if (firstStop != null) db.departures(firstStop, lineTextTime.toLocalDate(), v)
+                .filter { it.routeCode == code && it.directionIndex == (dir?.directionIndex ?: 0) }.sortedBy { it.minutes }
+            else emptyList()
+            val trip = deps.firstOrNull { it.minutes >= nowMin } ?: deps.lastOrNull()
+            val stops = trip?.let { db.tripStops(it.tripId) } ?: emptyList()
+            val col = dir?.color ?: db.routeColor(code, v)
+            runOnUiThread {
+                textContent.addView(tv("$code  →  ${dir?.name ?: ""}", col, 18f, true))
+                textContent.addView(tv("Trip departing ${trip?.let { Malta.hhmm(it.minutes) } ?: "—"}", grey, 13f))
+                for (s in stops) textContent.addView(tv("${Malta.hhmm(s.minutes)}    ${s.name}", white, 15f))
+                if (stops.isEmpty()) textContent.addView(tv("No trips found for this time.", grey))
+            }
+        }.start()
+    }
+
+    private fun rollLine(step: Int) {
+        val db = DbManager.db ?: return; val code = selectedLine ?: return
+        Thread {
+            val v = db.versionFor(lineTextTime.toLocalDate())
+            val d = db.directionsForRoute(code, v).getOrNull(selectedDir) ?: return@Thread
+            val firstStop = d.stopNumbers.firstOrNull()?.toIntOrNull() ?: return@Thread
+            val deps = db.departures(firstStop, lineTextTime.toLocalDate(), v)
+                .filter { it.routeCode == code && it.directionIndex == d.directionIndex }.sortedBy { it.minutes }
+            if (deps.isEmpty()) return@Thread
+            val nowMin = lineTextTime.hour * 60 + lineTextTime.minute
+            var idx = deps.indexOfFirst { it.minutes >= nowMin }; if (idx < 0) idx = deps.size - 1
+            val target = deps.getOrNull((idx + step).coerceIn(0, deps.size - 1)) ?: return@Thread
+            lineTextTime = Malta.at(lineTextTime.toLocalDate(), target.minutes)
+            runOnUiThread { buildTextPanel() }
+        }.start()
+    }
+
+    private fun buildNavigateText() {
+        val itin = currentItinerary
+        if (itin == null) {
+            textContent.addView(tv(getString(R.string.text_no_route), grey))
+            textContent.addView(smallBtn(getString(R.string.plan_journey)) { showPlanner() })
+            return
+        }
+        textContent.addView(tv(getString(R.string.text_route), white, 17f, true))
+        textContent.addView(tv("${Malta.hhmm(itin.departMinutes)} → ${Malta.hhmm(itin.arriveMinutes)}  (${itin.arriveMinutes - itin.departMinutes} min)", grey, 14f))
+        for (leg in itin.legs) when (leg) {
+            is WalkLeg -> textContent.addView(tv("Walk ${leg.meters} m to ${leg.toName}", white, 15f))
+            is BusLeg -> textContent.addView(clickRow(listOf(leg.color),
+                "${Malta.hhmm(leg.boardMinutes)}  ${leg.routeCode} → ${leg.towards}",
+                "${leg.fromName}  →  ${leg.toName}  (${Malta.hhmm(leg.alightMinutes)})") {})
+            else -> {}
+        }
+        textContent.addView(smallBtn(getString(R.string.navigate)) { confirmNavigate(itin) })
     }
 
     override fun onResume() { super.onResume(); NavHub.listen(navListener); startOwnLocation(); render() }
@@ -202,7 +376,7 @@ class MainActivity : Activity(), LocationListener {
                     .setNeutralButton(R.string.to_here) { _, _ -> to = Place(stop.display, stop.lat, stop.lon); toast("Destination: ${stop.display}") }
                     .setNegativeButton(R.string.close, null)
                     .create()
-                list.setOnItemClickListener { _, _, p, _ -> adapter.getItem(p)?.let { showRouteOnMap(it.routeCode) }; dlg.dismiss() }
+                list.setOnItemClickListener { _, _, p, _ -> adapter.getItem(p)?.let { selectLine(it.routeCode) }; dlg.dismiss() }
                 if (board.isEmpty()) { header.append("\n\nNo more departures today."); }
                 dlg.show()
             }
@@ -446,7 +620,12 @@ class MainActivity : Activity(), LocationListener {
             }.start()
         }
         list.setOnItemClickListener { _, _, p, _ ->
-            adapter.getItem(p)?.let { itin -> dlg.dismiss(); confirmNavigate(itin) }
+            adapter.getItem(p)?.let { itin ->
+                dlg.dismiss()
+                currentItinerary = itin; mode = Mode.NAVIGATE; lastItinerary = itin
+                updateMapForMode(); refreshView()
+                confirmNavigate(itin)
+            }
         }
         dlg.show()
     }
@@ -651,18 +830,16 @@ class MainActivity : Activity(), LocationListener {
         val n = NavHub.snapshot
         if (n.simulated && n.lat != null && n.lon != null) map.setMyLocation(n.lat, n.lon, 5f, n.bearing)
         if (n.active || n.arrived) {
+            panel.visibility = View.VISIBLE
             status.text = if (n.arrived) "" else "${n.distanceM} m"
             nextStop.text = n.instruction; nextStop.visibility = View.VISIBLE
             destination.text = getString(R.string.nav_cancel); destination.visibility = View.VISIBLE
             alert.text = if (n.pressStop) getString(R.string.press_stop) else n.detail
             alert.visibility = if (n.pressStop || n.detail.isNotEmpty()) View.VISIBLE else View.GONE
         } else {
-            status.text = if (DbManager.db == null) getString(R.string.db_none) else ""
-            nextStop.text = "Tap a stop for its lines · long-press to set start/destination"
-            nextStop.visibility = View.VISIBLE
-            destination.visibility = View.GONE
-            alert.visibility = View.GONE
+            panel.visibility = View.GONE
         }
+        if (::tabExplore.isInitialized) refreshTabs()
     }
 
     /** A list row with coloured line swatch(es) in a box before two text lines (white / grey). */

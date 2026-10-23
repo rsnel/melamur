@@ -118,6 +118,13 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         return out
     }
 
+    /** All routes valid in version [v], with name and (direction-0) colour. */
+    fun allLines(v: Int): List<Line> = query(
+        "SELECT code, name FROM route WHERE from_version<=? AND (to_version IS NULL OR to_version>?) ORDER BY code",
+        arrayOf("$v", "$v")
+    ) { it.getString(0) to (it.getStringOrNull(1) ?: it.getString(0)) }
+        .map { (code, name) -> Line(code, name, shapeColors(code, v)[0] ?: routeColor(code, v)) }
+
     /** Directions of a route with geometry and ordered stop numbers, for drawing. */
     fun directionsForRoute(code: String, v: Int): List<DirectionShape> {
         val fallback = routeColor(code, v)

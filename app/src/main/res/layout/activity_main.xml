@@ -1,70 +1,93 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent">
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:background="@color/mm_black" android:orientation="vertical">
 
-    <it.snel.melamur.map.MapView
-        android:id="@+id/map"
-        android:layout_width="match_parent" android:layout_height="match_parent" />
-
-    <!-- top: search bar, then MAP / PLAN / MISC, then (while searching) results -->
+    <!-- top: search, mode (Explore/Navigate), view (Map/Text/Misc), results -->
     <LinearLayout
         android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:background="@color/mm_black" android:orientation="vertical"
-        android:padding="8dp">
+        android:orientation="vertical" android:padding="8dp">
 
         <EditText
             android:id="@+id/searchBar"
-            android:layout_width="match_parent" android:layout_height="48dp"
+            android:layout_width="match_parent" android:layout_height="46dp"
             android:background="@drawable/panel_bg" android:hint="@string/search_hint"
             android:imeOptions="actionSearch" android:inputType="text" android:maxLines="1"
             android:paddingHorizontal="14dp" android:textColor="@color/mm_white"
             android:textColorHint="@color/mm_grey" android:textSize="16sp" />
 
-        <LinearLayout
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="8dp" android:orientation="horizontal">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" android:orientation="horizontal">
+            <Button android:id="@+id/tabExplore" style="@style/MmButton"
+                android:layout_width="0dp" android:layout_height="42dp"
+                android:layout_weight="1" android:layout_marginEnd="6dp" android:text="@string/tab_explore" />
+            <Button android:id="@+id/tabNavigate" style="@style/MmButton"
+                android:layout_width="0dp" android:layout_height="42dp"
+                android:layout_weight="1" android:text="@string/tab_navigate" />
+        </LinearLayout>
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" android:orientation="horizontal">
             <Button android:id="@+id/tabMap" style="@style/MmButton"
-                android:layout_width="0dp" android:layout_height="44dp"
+                android:layout_width="0dp" android:layout_height="40dp"
                 android:layout_weight="1" android:layout_marginEnd="6dp" android:text="@string/tab_map" />
-            <Button android:id="@+id/tabPlan" style="@style/MmButton"
-                android:layout_width="0dp" android:layout_height="44dp"
-                android:layout_weight="1" android:layout_marginEnd="6dp" android:text="@string/tab_plan" />
+            <Button android:id="@+id/tabText" style="@style/MmButton"
+                android:layout_width="0dp" android:layout_height="40dp"
+                android:layout_weight="1" android:layout_marginEnd="6dp" android:text="@string/tab_text" />
             <Button android:id="@+id/tabMisc" style="@style/MmButton"
-                android:layout_width="0dp" android:layout_height="44dp"
+                android:layout_width="0dp" android:layout_height="40dp"
                 android:layout_weight="1" android:text="@string/tab_misc" />
         </LinearLayout>
 
-        <ListView
-            android:id="@+id/searchResults"
-            android:layout_width="match_parent" android:layout_height="320dp"
+        <ListView android:id="@+id/searchResults"
+            android:layout_width="match_parent" android:layout_height="300dp"
             android:layout_marginTop="6dp" android:background="@color/mm_panel"
             android:visibility="gone" />
     </LinearLayout>
 
-    <Button android:id="@+id/center"
-        android:layout_width="56dp" android:layout_height="56dp"
-        android:layout_gravity="end|bottom"
-        android:layout_marginEnd="16dp" android:layout_marginBottom="150dp"
-        android:background="@drawable/fab_bg" android:text="@string/center"
-        android:textColor="@color/mm_white" android:textSize="24sp" />
+    <!-- content area: map or text -->
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1">
 
-    <LinearLayout android:id="@+id/panel"
-        android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:layout_gravity="bottom" android:layout_margin="10dp"
-        android:background="@drawable/panel_bg" android:orientation="vertical"
-        android:padding="12dp">
-        <TextView android:id="@+id/status" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:textColor="@color/mm_grey"
-            android:textSize="13sp" />
-        <TextView android:id="@+id/nextStop" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:textColor="@color/mm_white"
-            android:textSize="18sp" android:textStyle="bold" />
-        <TextView android:id="@+id/destination" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:textColor="@color/mm_red"
-            android:textSize="15sp" />
-        <TextView android:id="@+id/alert" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:background="@color/mm_red"
-            android:padding="8dp" android:textColor="@color/mm_white"
-            android:textSize="18sp" android:textStyle="bold" android:visibility="gone" />
-    </LinearLayout>
-</FrameLayout>
+        <it.snel.melamur.map.MapView android:id="@+id/map"
+            android:layout_width="match_parent" android:layout_height="match_parent" />
+
+        <ScrollView android:id="@+id/textPanel"
+            android:layout_width="match_parent" android:layout_height="match_parent"
+            android:background="@color/mm_black" android:visibility="gone">
+            <LinearLayout android:id="@+id/textContent"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="vertical" android:padding="14dp" />
+        </ScrollView>
+
+        <Button android:id="@+id/planFab"
+            android:layout_width="wrap_content" android:layout_height="48dp"
+            android:layout_gravity="start|bottom" android:layout_margin="16dp"
+            style="@style/MmButton" android:text="@string/plan_journey" android:visibility="gone" />
+
+        <Button android:id="@+id/center"
+            android:layout_width="56dp" android:layout_height="56dp"
+            android:layout_gravity="end|bottom"
+            android:layout_marginEnd="16dp" android:layout_marginBottom="150dp"
+            android:background="@drawable/fab_bg" android:text="@string/center"
+            android:textColor="@color/mm_white" android:textSize="24sp" />
+
+        <LinearLayout android:id="@+id/panel"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_gravity="bottom" android:layout_margin="10dp"
+            android:background="@drawable/panel_bg" android:orientation="vertical"
+            android:padding="12dp" android:visibility="gone">
+            <TextView android:id="@+id/status" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:textColor="@color/mm_grey" android:textSize="13sp" />
+            <TextView android:id="@+id/nextStop" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:textColor="@color/mm_white"
+                android:textSize="18sp" android:textStyle="bold" />
+            <TextView android:id="@+id/destination" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:textColor="@color/mm_red" android:textSize="15sp" />
+            <TextView android:id="@+id/alert" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:background="@color/mm_red"
+                android:padding="8dp" android:textColor="@color/mm_white"
+                android:textSize="18sp" android:textStyle="bold" android:visibility="gone" />
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>
