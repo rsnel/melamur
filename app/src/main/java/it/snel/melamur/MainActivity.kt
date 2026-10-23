@@ -91,6 +91,7 @@ class MainActivity : Activity(), LocationListener {
         destination.setOnClickListener { if (NavHub.snapshot.active || NavHub.snapshot.arrived) cancelNav() }
 
         pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
+        Settings.startup(this)?.let { map.setView(it[0], it[1], it[2].toFloat()) }
 
         Thread {
             val data = MapData(this)
@@ -302,16 +303,24 @@ class MainActivity : Activity(), LocationListener {
 
     // ---------------- burger menu
     private fun showMisc() {
-        val items = arrayOf(getString(R.string.menu_reload), getString(R.string.menu_debug),
-            getString(R.string.privacy), getString(R.string.menu_about))
-        AlertDialog.Builder(this).setItems(items) { _, w ->
-            when (w) {
-                0 -> reloadMenu()
-                1 -> lastItinerary?.let { startNavigation(it, simulate = true) } ?: toast(getString(R.string.sim_need))
-                2 -> showConsent(false)
-                3 -> showAbout()
+        val items = arrayListOf(getString(R.string.menu_settings), getString(R.string.menu_reload))
+        if (Settings.debug(this)) items.add(getString(R.string.menu_debug))
+        items.add(getString(R.string.privacy)); items.add(getString(R.string.menu_about))
+        AlertDialog.Builder(this).setItems(items.toTypedArray()) { _, w ->
+            when (items[w]) {
+                getString(R.string.menu_settings) -> openSettings()
+                getString(R.string.menu_reload) -> reloadMenu()
+                getString(R.string.menu_debug) -> lastItinerary?.let { startNavigation(it, simulate = true) } ?: toast(getString(R.string.sim_need))
+                getString(R.string.privacy) -> showConsent(false)
+                getString(R.string.menu_about) -> showAbout()
             }
         }.show()
+    }
+
+    private fun openSettings() {
+        startActivity(Intent(this, SettingsActivity::class.java).apply {
+            putExtra("lat", map.viewLat()); putExtra("lon", map.viewLon()); putExtra("scale", map.viewScale())
+        })
     }
 
     // ---------------- top search bar
@@ -413,13 +422,26 @@ class MainActivity : Activity(), LocationListener {
             val depart = departWhen ?: LocalDateTime.now(Malta.ZONE)
             searchBtn.isEnabled = false; stats.text = "…"
             Thread {
-                val cmp = runCatching { Planner.compare(db, allStops, f, t, depart) }.getOrDefault(emptyList())
-                runOnUiThread {
-                    searchBtn.isEnabled = true
-                    stats.text = statsText(cmp)
-                    val main = cmp.firstOrNull { it.engine == Engine.RAPTOR }?.itineraries ?: emptyList()
-                    adapter.clear(); adapter.addAll(main); adapter.notifyDataSetChanged()
-                    if (main.isEmpty()) toast(getString(R.string.planner_none))
+                if (Settings.debug(this)) {
+                    val cmp = runCatching { Planner.compare(db, allStops, f, t, depart) }.getOrDefault(emptyList())
+                    runOnUiThread {
+                        searchBtn.isEnabled = true
+                        stats.text = statsText(cmp)
+                        val main = cmp.firstOrNull { it.engine == Engine.RAPTOR }?.itineraries ?: emptyList()
+                        adapter.clear(); adapter.addAll(main); adapter.notifyDataSetChanged()
+                        if (main.isEmpty()) toast(getString(R.string.planner_none))
+                    }
+                } else {
+                    val eng = Settings.engine(this)
+                    val t0 = System.nanoTime()
+                    val res = runCatching { Planner.plan(db, allStops, f, t, depart, eng) }.getOrDefault(emptyList())
+                    val ms = (System.nanoTime() - t0) / 1_000_000.0
+                    runOnUiThread {
+                        searchBtn.isEnabled = true
+                        stats.text = "%s   %.1f ms · %d options".format(eng.name, ms, res.size)
+                        adapter.clear(); adapter.addAll(res); adapter.notifyDataSetChanged()
+                        if (res.isEmpty()) toast(getString(R.string.planner_none))
+                    }
                 }
             }.start()
         }
@@ -431,10 +453,11 @@ class MainActivity : Activity(), LocationListener {
 
     private fun confirmNavigate(itin: Itinerary) {
         lastItinerary = itin
-        AlertDialog.Builder(this).setTitle(R.string.navigate).setMessage(summary(itin))
+        val b = AlertDialog.Builder(this).setTitle(R.string.navigate).setMessage(summary(itin))
             .setPositiveButton(R.string.navigate) { _, _ -> startNavigation(itin, simulate = false) }
-            .setNeutralButton(R.string.simulate) { _, _ -> startNavigation(itin, simulate = true) }
-            .setNegativeButton(R.string.close, null).show()
+            .setNegativeButton(R.string.close, null)
+        if (Settings.debug(this)) b.setNeutralButton(R.string.simulate) { _, _ -> startNavigation(itin, simulate = true) }
+        b.show()
     }
 
     private fun statsText(cmp: List<EngineResult>): String {

@@ -67,6 +67,14 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         cx = s.x; cy = s.y; if (scale < 3f) scale = 6f; follow = false; invalidate()
     }
 
+    // current view, for saving/restoring a startup position
+    fun viewLat() = Geo.lat(cy).toDouble()
+    fun viewLon() = Geo.lon(cx).toDouble()
+    fun viewScale() = scale
+    fun setView(lat: Double, lon: Double, sc: Float) {
+        cx = Geo.x(lon); cy = Geo.y(lat); scale = sc; follow = false; invalidate()
+    }
+
     /** Centre on the user; zoom in to street level if we are zoomed far out. */
     fun centerOnMe(): Boolean {
         val m = me ?: return false

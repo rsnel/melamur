@@ -17,6 +17,7 @@
         <activity
             android:name=".SplashActivity"
             android:exported="true"
+            android:screenOrientation="portrait"
             android:theme="@style/Theme.MelaMur">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -26,7 +27,13 @@
         <activity
             android:name=".MainActivity"
             android:exported="false"
+            android:screenOrientation="portrait"
             android:launchMode="singleTop" />
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:label="@string/settings_title" />
         <service
             android:name=".nav.NavigationService"
             android:exported="false"

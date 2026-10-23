@@ -31,7 +31,7 @@ class SplashActivity : Activity() {
     private class SplashView(a: Activity, val onDone: () -> Unit) : View(a) {
         private val dp = resources.displayMetrics.density
         private val start = System.nanoTime()
-        private val dur = 5000L
+        private val dur = 6500L
         private val bus: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_logo, a.theme) }.getOrNull()
         private val boat: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_boat, a.theme) }.getOrNull()
         private val cross: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_maltese_cross, a.theme) }.getOrNull()
@@ -89,14 +89,8 @@ class SplashActivity : Activity() {
             }
             driveStop(bus, yBus, 300f, 1200f, 1900f, 2500f)
             driveStop(boat, yBoat, 2500f, boatStop, 4100f, 4700f)
-            bus?.let {                                   // second bus drives in near the end
-                val t0 = 4400f
-                if (el >= t0) {
-                    val xStart = w + vW; val xMid = (w - vW) / 2f
-                    val x = xStart + (xMid - xStart) * ease(((el - t0) / 900f).coerceIn(0f, 1f))
-                    it.setBounds(x.toInt(), yBus.toInt(), (x + vW).toInt(), (yBus + vH).toInt()); it.draw(c)
-                }
-            }
+            // second bus drives in and comes to rest (tOut == tEnd, so it never drives out)
+            driveStop(bus, yBus, 4700f, 5600f, 6500f, 6500f)
 
             // "Mela" fades in until the boat has stopped; "Mur" fades in after. Both red.
             val cyText = h * 0.82f
