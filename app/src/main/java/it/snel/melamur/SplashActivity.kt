@@ -21,6 +21,9 @@ import kotlin.math.min
 class SplashActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Parse the map (and warm the dataset) while the animation plays, so the
+        // map is ready to show the instant MainActivity opens.
+        Preloader.start(applicationContext)
         setContentView(SplashView(this) {
             startActivity(Intent(this, MainActivity::class.java))
             overridePendingTransition(0, 0)

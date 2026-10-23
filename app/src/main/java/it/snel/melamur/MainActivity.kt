@@ -28,7 +28,6 @@ import android.widget.TextView
 import android.widget.Toast
 import it.snel.melamur.data.*
 import it.snel.melamur.map.Geo
-import it.snel.melamur.map.MapData
 import it.snel.melamur.map.MapView
 import it.snel.melamur.map.RouteRenderer
 import it.snel.melamur.nav.NavHub
@@ -138,14 +137,24 @@ class MainActivity : Activity(), LocationListener {
         pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
         Settings.startup(this)?.let { map.setView(it[0], it[1], it[2].toFloat()) }
 
-        Thread {
-            val data = MapData(this)
-            val (pl, st, lm) = loadLabels()
-            runOnUiThread { map.data = data; places = pl; streets = st; landmarks = lm; rebuildIndex() }
-        }.start()
+        // Use the assets the splash warmed up: if ready, show the map instantly;
+        // otherwise finish loading in the background (Preloader de-dupes the work).
+        Preloader.start(applicationContext)
+        val warm = Preloader.mapData
+        if (warm != null) {
+            map.data = warm
+            Preloader.labels?.let { places = it.first; streets = it.second; landmarks = it.third }
+            rebuildIndex()
+        } else {
+            Thread {
+                val data = Preloader.getMapData(this)
+                val lbl = Preloader.getLabels(this)
+                runOnUiThread { map.data = data; places = lbl.first; streets = lbl.second; landmarks = lbl.third; rebuildIndex() }
+            }.start()
+        }
 
         if (DbManager.isImported(this)) {
-            Thread { DbManager.openExisting(this); loadData() }.start()
+            Thread { if (DbManager.db == null) DbManager.openExisting(this); loadData() }.start()
         } else {
             promptImport()
         }
@@ -834,30 +843,6 @@ class MainActivity : Activity(), LocationListener {
     @Deprecated("needed for API < 29") override fun onStatusChanged(p: String?, s: Int, b: Bundle?) {}
     override fun onProviderEnabled(p: String) {}
     override fun onProviderDisabled(p: String) {}
-
-    // ---------------- labels for search
-    private fun loadLabels(): Triple<List<MapView.PlaceLabel>, List<MapView.StreetLabel>, List<MapView.PlaceLabel>> = try {
-        val root = org.json.JSONObject(assets.open("labels.json").bufferedReader().use { it.readText() })
-        val pa = root.getJSONArray("places")
-        val pl = List(pa.length()) { i ->
-            val o = pa.getJSONObject(i)
-            MapView.PlaceLabel(Geo.x(o.getDouble("lon")), Geo.y(o.getDouble("lat")), o.getString("n"), o.getInt("r"))
-        }
-        val sa = root.getJSONArray("streets")
-        val st = List(sa.length()) { i ->
-            val o = sa.getJSONObject(i)
-            MapView.StreetLabel(Geo.x(o.getDouble("lon")), Geo.y(o.getDouble("lat")),
-                Geo.x(o.getDouble("lon2")), Geo.y(o.getDouble("lat2")), o.getString("n"))
-        }
-        val la = root.optJSONArray("landmarks") ?: org.json.JSONArray()
-        val lm = List(la.length()) { i ->
-            val o = la.getJSONObject(i)
-            MapView.PlaceLabel(Geo.x(o.getDouble("lon")), Geo.y(o.getDouble("lat")), o.getString("n"), 3)
-        }
-        Triple(pl, st, lm)
-    } catch (e: Exception) {
-        Triple(emptyList<MapView.PlaceLabel>(), emptyList<MapView.StreetLabel>(), emptyList<MapView.PlaceLabel>())
-    }
 
     // ---------------- bottom panel
     private fun render() {
