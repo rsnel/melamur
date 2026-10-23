@@ -55,6 +55,9 @@ class MainActivity : Activity(), LocationListener {
     private var landmarks: List<MapView.PlaceLabel> = emptyList()
     private var pois: MutableList<Poi> = mutableListOf()
     private var searchIndex: SearchIndex.Index? = null
+    private lateinit var searchBar: EditText
+    private lateinit var searchResults: ListView
+    private lateinit var searchAdapter: ArrayAdapter<SearchResult>
 
     // planner selections
     private var from: Place? = null
@@ -76,8 +79,13 @@ class MainActivity : Activity(), LocationListener {
         findViewById<Button>(R.id.center).setOnClickListener {
             if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
         }
-        findViewById<Button>(R.id.search).setOnClickListener { showSearch { handleMapPick(it) } }
-        findViewById<Button>(R.id.menu).setOnClickListener { showMenu() }
+        searchBar = findViewById(R.id.searchBar); searchResults = findViewById(R.id.searchResults)
+        setupSearchBar()
+        findViewById<Button>(R.id.tabMap).setOnClickListener {
+            map.routes = emptyList(); map.activeRouteId = null; map.invalidate(); hideSearch()
+        }
+        findViewById<Button>(R.id.tabPlan).setOnClickListener { showPlanner() }
+        findViewById<Button>(R.id.tabMisc).setOnClickListener { showMisc() }
         map.onStopTapped = { bs -> stopFor(bs)?.let { showStop(it) } }
         map.onMapLongPress = { lat, lon, poi -> showLongPressMenu(lat, lon, poi) }
         destination.setOnClickListener { if (NavHub.snapshot.active || NavHub.snapshot.arrived) cancelNav() }
@@ -175,20 +183,14 @@ class MainActivity : Activity(), LocationListener {
                 }
                 val list = ListView(this)
                 box.addView(header); box.addView(list)
-                val adapter = object : ArrayAdapter<Departure>(this, android.R.layout.simple_list_item_2,
-                    android.R.id.text1, ArrayList(board)) {
+                val adapter = object : ArrayAdapter<Departure>(this, android.R.layout.simple_list_item_1,
+                    ArrayList(board)) {
                     override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
-                        val view = super.getView(pos, cv, parent); val d = getItem(pos)!!
-                        view.findViewById<TextView>(android.R.id.text1).apply {
-                            text = "●  ${d.routeCode}   →  ${d.towards}"
-                            setTextColor(colorOf[d.routeCode] ?: white)
-                        }
+                        val d = getItem(pos)!!
                         val mins = java.time.Duration.between(now, d.time).toMinutes()
                         val cd = if (mins <= 0) "now" else "in $mins min"
-                        view.findViewById<TextView>(android.R.id.text2).apply {
-                            text = "${Malta.hhmm(d.minutes)}   ·   $cd"; setTextColor(grey)
-                        }
-                        return view
+                        return colorRow(listOf(colorOf[d.routeCode] ?: white),
+                            "${d.routeCode}    →  ${d.towards}", "${Malta.hhmm(d.minutes)}    ·    $cd")
                     }
                 }
                 list.adapter = adapter
@@ -299,20 +301,59 @@ class MainActivity : Activity(), LocationListener {
     }
 
     // ---------------- burger menu
-    private fun showMenu() {
-        val items = arrayOf(getString(R.string.menu_map), getString(R.string.menu_planner),
-            getString(R.string.menu_reload), getString(R.string.menu_debug),
+    private fun showMisc() {
+        val items = arrayOf(getString(R.string.menu_reload), getString(R.string.menu_debug),
             getString(R.string.privacy), getString(R.string.menu_about))
         AlertDialog.Builder(this).setItems(items) { _, w ->
             when (w) {
-                0 -> { map.routes = emptyList(); map.activeRouteId = null; map.invalidate() }
-                1 -> showPlanner()
-                2 -> reloadMenu()
-                3 -> lastItinerary?.let { startNavigation(it, simulate = true) } ?: toast(getString(R.string.sim_need))
-                4 -> showConsent(false)
-                5 -> showAbout()
+                0 -> reloadMenu()
+                1 -> lastItinerary?.let { startNavigation(it, simulate = true) } ?: toast(getString(R.string.sim_need))
+                2 -> showConsent(false)
+                3 -> showAbout()
             }
         }.show()
+    }
+
+    // ---------------- top search bar
+    private fun setupSearchBar() {
+        searchAdapter = searchResultAdapter()
+        searchResults.adapter = searchAdapter
+        val handler = android.os.Handler(mainLooper); var pending: Runnable? = null
+        searchBar.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(s: android.text.Editable?) {
+                pending?.let { handler.removeCallbacks(it) }
+                val run = Runnable {
+                    val q = searchBar.text.toString()
+                    val r = if (q.isBlank()) emptyList() else (searchIndex?.search(q) ?: emptyList())
+                    searchAdapter.clear(); searchAdapter.addAll(r); searchAdapter.notifyDataSetChanged()
+                    searchResults.visibility = if (r.isEmpty()) View.GONE else View.VISIBLE
+                }
+                pending = run; handler.postDelayed(run, 140)
+            }
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        searchResults.setOnItemClickListener { _, _, p, _ ->
+            searchAdapter.getItem(p)?.let { handleMapPick(it) }
+            searchBar.setText(""); hideSearch(); hideKeyboard()
+        }
+    }
+
+    private fun searchResultAdapter() = object : ArrayAdapter<SearchResult>(
+        this, android.R.layout.simple_list_item_2, android.R.id.text1, ArrayList()
+    ) {
+        override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
+            val v = super.getView(pos, cv, parent); val r = getItem(pos)!!
+            v.findViewById<TextView>(android.R.id.text1).apply { text = r.label; setTextColor(white) }
+            v.findViewById<TextView>(android.R.id.text2).apply { text = r.sublabel; setTextColor(grey) }
+            return v
+        }
+    }
+
+    private fun hideSearch() { searchResults.visibility = View.GONE }
+    private fun hideKeyboard() {
+        (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+            .hideSoftInputFromWindow(searchBar.windowToken, 0)
     }
 
     private fun reloadMenu() {
@@ -353,15 +394,13 @@ class MainActivity : Activity(), LocationListener {
         toBtn.setOnClickListener { showSearch { to = it.asPlace(); refreshLabels() } }
         timeBtn.setOnClickListener { pickDateTime { departWhen = it; refreshLabels() } }
 
-        val adapter = object : ArrayAdapter<Itinerary>(this, android.R.layout.simple_list_item_2, android.R.id.text1, ArrayList()) {
+        val adapter = object : ArrayAdapter<Itinerary>(this, android.R.layout.simple_list_item_1, ArrayList()) {
             override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
-                val v = super.getView(pos, cv, parent); val it = getItem(pos)!!
-                v.findViewById<TextView>(android.R.id.text1).apply {
-                    text = "${hm(it.departMinutes)} → ${hm(it.arriveMinutes)}  (${it.arriveMinutes - it.departMinutes} min)"
-                    setTextColor(white)
-                }
-                v.findViewById<TextView>(android.R.id.text2).apply { text = summary(it); setTextColor(grey) }
-                return v
+                val it = getItem(pos)!!
+                val cols = it.busLegs.map { bl -> bl.color }.ifEmpty { listOf(grey) }
+                return colorRow(cols,
+                    "${hm(it.departMinutes)} → ${hm(it.arriveMinutes)}  (${it.arriveMinutes - it.departMinutes} min)",
+                    summary(it))
             }
         }
         list.adapter = adapter
@@ -601,6 +640,26 @@ class MainActivity : Activity(), LocationListener {
             destination.visibility = View.GONE
             alert.visibility = View.GONE
         }
+    }
+
+    /** A list row with coloured line swatch(es) in a box before two text lines (white / grey). */
+    private fun colorRow(colors: List<Int>, line1: String, line2: String): View {
+        val d = resources.displayMetrics.density
+        fun px(v: Float) = (v * d).toInt()
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(px(12f), px(10f), px(12f), px(10f))
+        }
+        for (c in colors.take(4)) row.addView(View(this).apply {
+            setBackgroundColor(c)
+            layoutParams = LinearLayout.LayoutParams(px(16f), px(16f)).apply { marginEnd = px(5f) }
+        })
+        row.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(px(4f), 0, 0, 0)
+            addView(TextView(this@MainActivity).apply { text = line1; setTextColor(white); textSize = 16f })
+            addView(TextView(this@MainActivity).apply { text = line2; setTextColor(grey); textSize = 13f })
+        })
+        return row
     }
 
     private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()

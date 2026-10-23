@@ -126,37 +126,39 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private fun stroke(c: Int) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = c; style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
     }
-    // dark map so the red/black theme and the coloured bus lines stand out
-    private val sea = Color.rgb(16, 22, 32)
+    // normal light map: blue water, grey-green land, pastel roads — so the red
+    // stop rings and the coloured bus lines stay clearly visible on top
+    private val sea = Color.rgb(160, 200, 224)
     private class Layer(val style: Int, val paint: Paint, val widthPx: Float, val widthM: Float, val minScale: Float)
     private val layers = listOf(
-        Layer(MapData.LAND, fill(Color.rgb(30, 30, 30)), 0f, 0f, 0f),
-        Layer(MapData.FARM, fill(Color.rgb(34, 36, 30)), 0f, 0f, 0.05f),
-        Layer(MapData.GREEN, fill(Color.rgb(28, 42, 30)), 0f, 0f, 0.05f),
-        Layer(MapData.URBAN, fill(Color.rgb(40, 38, 38)), 0f, 0f, 0f),
+        Layer(MapData.LAND, fill(Color.rgb(223, 227, 214)), 0f, 0f, 0f),
+        Layer(MapData.FARM, fill(Color.rgb(231, 229, 210)), 0f, 0f, 0.05f),
+        Layer(MapData.GREEN, fill(Color.rgb(200, 224, 186)), 0f, 0f, 0.05f),
+        Layer(MapData.URBAN, fill(Color.rgb(228, 225, 219)), 0f, 0f, 0f),
         Layer(MapData.WATER, fill(sea), 0f, 0f, 0.05f),
-        Layer(MapData.BUILDING, fill(Color.rgb(58, 54, 54)), 0f, 0f, 0.6f),
-        Layer(MapData.FOOT, stroke(Color.rgb(80, 74, 74)), 0.8f, 0f, 1.0f),
-        Layer(MapData.SERVICE, stroke(Color.rgb(90, 90, 90)), 1f, 3f, 0.5f),
-        Layer(MapData.MINOR, stroke(Color.rgb(110, 110, 110)), 1f, 5f, 0.15f),
-        Layer(MapData.TERTIARY, stroke(Color.rgb(140, 140, 140)), 1.2f, 7f, 0.06f),
-        Layer(MapData.SECONDARY, stroke(Color.rgb(170, 160, 150)), 1.4f, 8f, 0.02f),
-        Layer(MapData.PRIMARY, stroke(Color.rgb(200, 180, 160)), 1.6f, 9f, 0f),
-        Layer(MapData.TRUNK, stroke(Color.rgb(220, 200, 170)), 2f, 11f, 0f),
+        Layer(MapData.BUILDING, fill(Color.rgb(214, 210, 199)), 0f, 0f, 0.6f),
+        Layer(MapData.FOOT, stroke(Color.rgb(205, 196, 180)), 0.8f, 0f, 1.0f),
+        Layer(MapData.SERVICE, stroke(Color.rgb(250, 247, 240)), 1f, 3f, 0.5f),
+        Layer(MapData.MINOR, stroke(Color.rgb(255, 255, 255)), 1f, 5f, 0.15f),
+        Layer(MapData.TERTIARY, stroke(Color.rgb(251, 243, 226)), 1.2f, 7f, 0.06f),
+        Layer(MapData.SECONDARY, stroke(Color.rgb(247, 233, 201)), 1.4f, 8f, 0.02f),
+        Layer(MapData.PRIMARY, stroke(Color.rgb(243, 223, 173)), 1.6f, 9f, 0f),
+        Layer(MapData.TRUNK, stroke(Color.rgb(239, 215, 154)), 2f, 11f, 0f),
     )
     private val routePaint = stroke(Color.WHITE)
     private val arrowPaint = fill(Color.WHITE)
     private val stopFill = fill(Color.WHITE)
     private val stopRing = stroke(Color.rgb(225, 6, 0)).apply { strokeWidth = 2 * dp }
+    // white text with a strong dark halo for high contrast on the light map
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; textSize = 12 * dp; setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+        color = Color.WHITE; textSize = 12 * dp; isFakeBoldText = true; setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
     }
     private val placePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; textAlign = Paint.Align.CENTER; setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
+        color = Color.WHITE; textAlign = Paint.Align.CENTER; setShadowLayer(5 * dp, 0f, 0f, Color.BLACK)
     }
     private val streetPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.rgb(225, 225, 225); textSize = 11 * dp; textAlign = Paint.Align.CENTER
-        setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
+        color = Color.WHITE; textSize = 11 * dp; textAlign = Paint.Align.CENTER
+        setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
     }
     private val placeDot = fill(Color.WHITE)
     private val poiFill = fill(Color.rgb(255, 193, 7))
