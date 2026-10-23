@@ -3,38 +3,13 @@
     android:layout_width="match_parent" android:layout_height="match_parent"
     android:background="@color/mm_black" android:orientation="vertical">
 
-    <!-- top: search, mode (Explore/Navigate), view (Map/Text/Misc), results -->
+    <!-- top: mode selector (Explore/Navigate), then search (Explore) or planner (Navigate), then results -->
     <LinearLayout
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="vertical" android:padding="8dp">
 
-        <!-- Explore: one search bar. Navigate: separate start/destination inputs. -->
-        <EditText
-            android:id="@+id/searchBar"
-            android:layout_width="match_parent" android:layout_height="46dp"
-            android:background="@drawable/panel_bg" android:hint="@string/search_hint"
-            android:imeOptions="actionSearch" android:inputType="text" android:maxLines="1"
-            android:paddingHorizontal="14dp" android:textColor="@color/mm_white"
-            android:textColorHint="@color/mm_grey" android:textSize="16sp" />
-
-        <LinearLayout android:id="@+id/navInputs"
-            android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="vertical" android:visibility="gone">
-            <EditText android:id="@+id/startInput"
-                android:layout_width="match_parent" android:layout_height="46dp"
-                android:background="@drawable/panel_bg" android:hint="@string/planner_choose_from"
-                android:inputType="text" android:maxLines="1" android:paddingHorizontal="14dp"
-                android:textColor="@color/mm_white" android:textColorHint="@color/mm_grey" android:textSize="16sp" />
-            <EditText android:id="@+id/endInput"
-                android:layout_width="match_parent" android:layout_height="46dp"
-                android:layout_marginTop="6dp"
-                android:background="@drawable/panel_bg" android:hint="@string/planner_choose_to"
-                android:inputType="text" android:maxLines="1" android:paddingHorizontal="14dp"
-                android:textColor="@color/mm_white" android:textColorHint="@color/mm_grey" android:textSize="16sp" />
-        </LinearLayout>
-
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" android:orientation="horizontal">
+            android:orientation="horizontal">
             <Button android:id="@+id/tabExplore" style="@style/MmButton"
                 android:layout_width="0dp" android:layout_height="42dp"
                 android:layout_weight="1" android:layout_marginEnd="6dp" android:text="@string/tab_explore" />
@@ -43,17 +18,50 @@
                 android:layout_weight="1" android:text="@string/tab_navigate" />
         </LinearLayout>
 
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" android:orientation="horizontal">
-            <Button android:id="@+id/tabMap" style="@style/MmButton"
-                android:layout_width="0dp" android:layout_height="40dp"
-                android:layout_weight="1" android:layout_marginEnd="6dp" android:text="@string/tab_map" />
-            <Button android:id="@+id/tabText" style="@style/MmButton"
-                android:layout_width="0dp" android:layout_height="40dp"
-                android:layout_weight="1" android:layout_marginEnd="6dp" android:text="@string/tab_text" />
-            <Button android:id="@+id/tabMisc" style="@style/MmButton"
-                android:layout_width="0dp" android:layout_height="40dp"
-                android:layout_weight="1" android:text="@string/tab_misc" />
+        <!-- Explore: one search bar -->
+        <EditText
+            android:id="@+id/searchBar"
+            android:layout_width="match_parent" android:layout_height="46dp"
+            android:layout_marginTop="6dp"
+            android:background="@drawable/panel_bg" android:hint="@string/search_hint"
+            android:imeOptions="actionSearch" android:inputType="text" android:maxLines="1"
+            android:paddingHorizontal="14dp" android:textColor="@color/mm_white"
+            android:textColorHint="@color/mm_grey" android:textSize="16sp" />
+
+        <!-- Navigate: start + destination (with swap), then time + plan -->
+        <LinearLayout android:id="@+id/navInputs"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" android:orientation="vertical" android:visibility="gone">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:orientation="vertical">
+                    <EditText android:id="@+id/startInput"
+                        android:layout_width="match_parent" android:layout_height="46dp"
+                        android:background="@drawable/panel_bg" android:hint="@string/planner_choose_from"
+                        android:inputType="text" android:maxLines="1" android:paddingHorizontal="14dp"
+                        android:textColor="@color/mm_white" android:textColorHint="@color/mm_grey" android:textSize="16sp" />
+                    <EditText android:id="@+id/endInput"
+                        android:layout_width="match_parent" android:layout_height="46dp"
+                        android:layout_marginTop="6dp"
+                        android:background="@drawable/panel_bg" android:hint="@string/planner_choose_to"
+                        android:inputType="text" android:maxLines="1" android:paddingHorizontal="14dp"
+                        android:textColor="@color/mm_white" android:textColorHint="@color/mm_grey" android:textSize="16sp" />
+                </LinearLayout>
+                <Button android:id="@+id/swapEnds" style="@style/MmButton"
+                    android:layout_width="48dp" android:layout_height="match_parent"
+                    android:layout_marginStart="6dp" android:text="@string/swap_ends"
+                    android:contentDescription="@string/cd_swap" android:textSize="20sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="6dp" android:orientation="horizontal">
+                <Button android:id="@+id/timeBtn" style="@style/MmButton"
+                    android:layout_width="0dp" android:layout_height="44dp"
+                    android:layout_weight="1" android:layout_marginEnd="6dp" />
+                <Button android:id="@+id/planBtn" style="@style/MmButton"
+                    android:layout_width="0dp" android:layout_height="44dp"
+                    android:layout_weight="1" android:text="@string/plan" />
+            </LinearLayout>
         </LinearLayout>
 
         <ListView android:id="@+id/searchResults"
@@ -77,15 +85,11 @@
                 android:orientation="vertical" android:padding="14dp" />
         </ScrollView>
 
-        <Button android:id="@+id/planFab"
-            android:layout_width="wrap_content" android:layout_height="48dp"
-            android:layout_gravity="start|bottom" android:layout_margin="16dp"
-            style="@style/MmButton" android:text="@string/plan_journey" android:visibility="gone" />
-
+        <!-- center-me: sits bottom-right, just above the Map/Text/Misc bar; hidden in text mode -->
         <Button android:id="@+id/center"
             android:layout_width="56dp" android:layout_height="56dp"
             android:layout_gravity="end|bottom"
-            android:layout_marginEnd="16dp" android:layout_marginBottom="150dp"
+            android:layout_marginEnd="16dp" android:layout_marginBottom="16dp"
             android:background="@drawable/fab_bg" android:text="@string/center"
             android:textColor="@color/mm_white" android:textSize="24sp" />
 
@@ -107,4 +111,21 @@
                 android:textSize="18sp" android:textStyle="bold" android:visibility="gone" />
         </LinearLayout>
     </FrameLayout>
+
+    <!-- bottom bar: Map / Text / Misc (menu) -->
+    <LinearLayout android:layout_width="match_parent" android:layout_height="56dp"
+        android:background="@color/mm_panel" android:orientation="horizontal">
+        <ImageButton android:id="@+id/tabMap"
+            android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+            android:background="@color/mm_panel" android:scaleType="centerInside"
+            android:src="@drawable/ic_map" android:contentDescription="@string/cd_map" />
+        <ImageButton android:id="@+id/tabText"
+            android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+            android:background="@color/mm_panel" android:scaleType="centerInside"
+            android:src="@drawable/ic_text" android:contentDescription="@string/cd_text" />
+        <ImageButton android:id="@+id/tabMisc"
+            android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+            android:background="@color/mm_panel" android:scaleType="centerInside"
+            android:src="@drawable/ic_menu" android:contentDescription="@string/cd_menu" />
+    </LinearLayout>
 </LinearLayout>

@@ -33,6 +33,16 @@ data class Stop(
 /** A route/line that serves a stop (from v_stop_routes joined to route). */
 data class Line(val code: String, val name: String, val color: Int)
 
+/** One direction of a line for the Explore list: colour + first/last stop numbers. */
+data class LineDir(
+    val code: String,
+    val directionIndex: Int,
+    val color: Int,
+    val firstStop: Int?,
+    val lastStop: Int?,
+    val name: String,
+)
+
 /** A scheduled departure from a stop. */
 data class Departure(
     val routeCode: String,

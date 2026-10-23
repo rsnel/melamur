@@ -125,6 +125,33 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
     ) { it.getString(0) to (it.getStringOrNull(1) ?: it.getString(0)) }
         .map { (code, name) -> Line(code, name, shapeColors(code, v)[0] ?: routeColor(code, v)) }
 
+    /**
+     * All directions of all routes valid in [v], with the per-direction drawing
+     * colour and the first/last stop numbers — for the Explore line list. One
+     * query; stop display names are resolved by the caller from its stop map.
+     */
+    fun allLineDirections(v: Int): List<LineDir> = query(
+        "SELECT d.route_code, d.direction_index, " +
+            "COALESCE((SELECT rs.color FROM route_shape rs WHERE rs.route_id=r.id " +
+            "  AND rs.direction_index=d.direction_index AND rs.color IS NOT NULL ORDER BY rs.shape_no LIMIT 1), r.kml_color) AS color, " +
+            "(SELECT stop_number FROM direction_stop WHERE direction_id=d.id ORDER BY pos ASC LIMIT 1) AS first_stop, " +
+            "(SELECT stop_number FROM direction_stop WHERE direction_id=d.id ORDER BY pos DESC LIMIT 1) AS last_stop, " +
+            "d.name " +
+            "FROM direction d " +
+            "JOIN route r ON r.code=d.route_code AND r.from_version<=? AND (r.to_version IS NULL OR r.to_version>?) " +
+            "WHERE d.from_version<=? AND (d.to_version IS NULL OR d.to_version>?) " +
+            "ORDER BY d.route_code, d.direction_index",
+        arrayOf("$v", "$v", "$v", "$v")
+    ) {
+        LineDir(
+            it.getString(0), it.getInt(1),
+            parseColor(it.getStringOrNull(2), "${it.getString(0)}/${it.getInt(1)}"),
+            if (it.isNull(3)) null else it.getInt(3),
+            if (it.isNull(4)) null else it.getInt(4),
+            it.getStringOrNull(5) ?: ""
+        )
+    }
+
     /** Directions of a route with geometry and ordered stop numbers, for drawing. */
     fun directionsForRoute(code: String, v: Int): List<DirectionShape> {
         val fallback = routeColor(code, v)

@@ -45,6 +45,15 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     var activeRouteId: String? = null
     var nextStopId: String? = null
     var destinationStopId: String? = null
+    // journey endpoints (projected x,y), drawn with distinct start/finish symbols
+    private var startPt: FloatArray? = null
+    private var finishPt: FloatArray? = null
+    /** Set the journey start/finish markers; each is [lat, lon] or null to clear. */
+    fun setEndpoints(start: DoubleArray?, finish: DoubleArray?) {
+        startPt = start?.let { floatArrayOf(Geo.x(it[1]), Geo.y(it[0])) }
+        finishPt = finish?.let { floatArrayOf(Geo.x(it[1]), Geo.y(it[0])) }
+        invalidate()
+    }
     var onStopTapped: ((BusStop) -> Unit)? = null
     /** Long-press on the map: reports the world position and the POI hit, if any. */
     var onMapLongPress: ((lat: Double, lon: Double, poi: Poi?) -> Unit)? = null
@@ -175,6 +184,14 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         color = Color.rgb(255, 193, 7); textSize = 12 * dp; setShadowLayer(3 * dp, 0f, 0f, Color.BLACK)
     }
     private val diamond = Path()
+    // journey endpoint markers: green teardrop pin (start) and chequered flag (finish)
+    private val startFill = fill(Color.rgb(46, 160, 67))
+    private val startRing = stroke(Color.WHITE).apply { strokeWidth = 2.5f * dp }
+    private val flagPole = stroke(Color.rgb(20, 20, 20)).apply { strokeWidth = 2f * dp }
+    private val flagOutline = stroke(Color.rgb(20, 20, 20)).apply { strokeWidth = 1.5f * dp }
+    private val checkerDark = fill(Color.rgb(20, 20, 20))
+    private val checkerLight = fill(Color.WHITE)
+    private val pin = Path()
     private val occupied = HashSet<Long>() // label collision grid, rebuilt per frame
     private val meFill = fill(Color.WHITE)
     private val meRing = stroke(Color.rgb(238, 0, 0)).apply { strokeWidth = 4 * dp }
@@ -280,6 +297,8 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             c.drawPath(diamond, poiFill); c.drawPath(diamond, poiStroke)
             if (scale > 1.5f) c.drawText(p.name, pt[0] + s + 3 * dp, pt[1] + 4 * dp, poiLabel)
         }
+        startPt?.let { s -> pt[0] = s[0]; pt[1] = s[1]; matrix.mapPoints(pt); drawStartPin(c, pt[0], pt[1]) }
+        finishPt?.let { f -> pt[0] = f[0]; pt[1] = f[1]; matrix.mapPoints(pt); drawFinishFlag(c, pt[0], pt[1]) }
         me?.let { m ->
             pt[0] = m[0]; pt[1] = m[1]; matrix.mapPoints(pt)
             c.drawCircle(pt[0], pt[1], m[2] * scale, meAcc)
@@ -287,6 +306,29 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             meFill.color = Color.WHITE
             c.drawCircle(pt[0], pt[1], 8 * dp, meFill); c.drawCircle(pt[0], pt[1], 8 * dp, meRing)
         }
+    }
+
+    /** Green teardrop pin with a white centre; its tip sits exactly on (x, y). */
+    private fun drawStartPin(c: Canvas, x: Float, y: Float) {
+        val r = 9 * dp
+        val cyc = y - 1.8f * r
+        pin.reset()
+        pin.addCircle(x, cyc, r, Path.Direction.CW)
+        pin.moveTo(x - r * 0.62f, cyc + r * 0.6f); pin.lineTo(x, y); pin.lineTo(x + r * 0.62f, cyc + r * 0.6f); pin.close()
+        c.drawPath(pin, startFill); c.drawPath(pin, startRing)
+        c.drawCircle(x, cyc, r * 0.4f, checkerLight)
+    }
+
+    /** Chequered finish flag on a pole whose foot sits on (x, y). */
+    private fun drawFinishFlag(c: Canvas, x: Float, y: Float) {
+        val cell = 5 * dp; val cols = 3; val rows = 2
+        val w = cell * cols; val top = y - 20 * dp
+        c.drawLine(x, y, x, top, flagPole)
+        for (row in 0 until rows) for (col in 0 until cols) {
+            val left = x + col * cell; val t = top + row * cell
+            c.drawRect(left, t, left + cell, t + cell, if ((row + col) % 2 == 0) checkerDark else checkerLight)
+        }
+        c.drawRect(x, top, x + w, top + rows * cell, flagOutline)
     }
 
     private fun drawArrow(c: Canvas, x: Float, y: Float, bearing: Float, size: Float) {

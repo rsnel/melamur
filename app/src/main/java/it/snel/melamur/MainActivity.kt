@@ -21,6 +21,7 @@ import android.view.ViewGroup
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
@@ -87,13 +88,17 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var panel: View
     private lateinit var textPanel: android.widget.ScrollView
     private lateinit var textContent: LinearLayout
-    private lateinit var planFab: Button
+    private lateinit var centerBtn: Button
     private lateinit var tabExplore: Button
     private lateinit var tabNavigate: Button
-    private lateinit var tabMap: Button
-    private lateinit var tabText: Button
+    private lateinit var tabMap: ImageButton
+    private lateinit var tabText: ImageButton
+    private lateinit var tabMisc: ImageButton
+    private lateinit var timeBtn: Button
+    private lateinit var planBtn: Button
     private val tabOn = Color.rgb(238, 0, 0)
     private val tabOff = Color.rgb(60, 60, 60)
+    private val iconOff = Color.rgb(150, 150, 150)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -104,7 +109,8 @@ class MainActivity : Activity(), LocationListener {
         panel = findViewById(R.id.panel)
         lm = getSystemService(LocationManager::class.java)
 
-        findViewById<Button>(R.id.center).setOnClickListener {
+        centerBtn = findViewById(R.id.center)
+        centerBtn.setOnClickListener {
             if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
         }
         searchBar = findViewById(R.id.searchBar); searchResults = findViewById(R.id.searchResults)
@@ -112,15 +118,19 @@ class MainActivity : Activity(), LocationListener {
         navInputs = findViewById(R.id.navInputs)
         setupSearchInputs()
         tabExplore = findViewById(R.id.tabExplore); tabNavigate = findViewById(R.id.tabNavigate)
-        tabMap = findViewById(R.id.tabMap); tabText = findViewById(R.id.tabText)
+        tabMap = findViewById(R.id.tabMap); tabText = findViewById(R.id.tabText); tabMisc = findViewById(R.id.tabMisc)
         textPanel = findViewById(R.id.textPanel); textContent = findViewById(R.id.textContent)
-        planFab = findViewById(R.id.planFab)
+        timeBtn = findViewById(R.id.timeBtn); planBtn = findViewById(R.id.planBtn)
         tabExplore.setOnClickListener { setMode(Mode.EXPLORE) }
         tabNavigate.setOnClickListener { setMode(Mode.NAVIGATE) }
         tabMap.setOnClickListener { setView(ViewKind.MAP) }
         tabText.setOnClickListener { setView(ViewKind.TEXT) }
-        findViewById<Button>(R.id.tabMisc).setOnClickListener { showMisc() }
-        planFab.setOnClickListener { showPlanner() }
+        tabMisc.setOnClickListener { showMisc() }
+        tabMisc.imageTintList = ColorStateList.valueOf(iconOff)
+        findViewById<Button>(R.id.swapEnds).setOnClickListener { swapEndpoints() }
+        timeBtn.setOnClickListener { pickDateTime { departWhen = it; refreshTimeLabel() } }
+        planBtn.setOnClickListener { runPlan() }
+        refreshTimeLabel()
         map.onStopTapped = { bs -> stopFor(bs)?.let { showStop(it) } }
         map.onMapLongPress = { lat, lon, poi -> showLongPressMenu(lat, lon, poi) }
         destination.setOnClickListener { if (NavHub.snapshot.active || NavHub.snapshot.arrived) cancelNav() }
@@ -150,11 +160,11 @@ class MainActivity : Activity(), LocationListener {
     private fun refreshTabs() {
         tabExplore.backgroundTintList = ColorStateList.valueOf(if (mode == Mode.EXPLORE) tabOn else tabOff)
         tabNavigate.backgroundTintList = ColorStateList.valueOf(if (mode == Mode.NAVIGATE) tabOn else tabOff)
-        tabMap.backgroundTintList = ColorStateList.valueOf(if (viewKind == ViewKind.MAP) tabOn else tabOff)
-        tabText.backgroundTintList = ColorStateList.valueOf(if (viewKind == ViewKind.TEXT) tabOn else tabOff)
-        planFab.visibility = if (mode == Mode.NAVIGATE && viewKind == ViewKind.MAP && !NavHub.snapshot.active)
-            View.VISIBLE else View.GONE
-        // Explore uses the single search bar; Navigate uses separate start/destination inputs.
+        tabMap.imageTintList = ColorStateList.valueOf(if (viewKind == ViewKind.MAP) tabOn else iconOff)
+        tabText.imageTintList = ColorStateList.valueOf(if (viewKind == ViewKind.TEXT) tabOn else iconOff)
+        // center-me lives just above the bottom bar; only useful on the map
+        centerBtn.visibility = if (viewKind == ViewKind.MAP) View.VISIBLE else View.GONE
+        // Explore uses the single search bar; Navigate uses the start/destination planner.
         if (::navInputs.isInitialized) {
             val nav = mode == Mode.NAVIGATE
             searchBar.visibility = if (nav) View.GONE else View.VISIBLE
@@ -162,6 +172,16 @@ class MainActivity : Activity(), LocationListener {
             if (nav) syncNavInputs()
         }
     }
+
+    private fun refreshTimeLabel() {
+        if (::timeBtn.isInitialized)
+            timeBtn.text = getString(R.string.planner_time, departWhen?.format(fmt) ?: getString(R.string.planner_now))
+    }
+
+    private fun swapEndpoints() { val f = from; setFrom(to); setTo(f) }
+
+    /** Sort key so line codes order numerically (1, 2, 13); non-numeric codes come last. */
+    private fun codeKey(code: String): Int = code.takeWhile { it.isDigit() }.toIntOrNull() ?: Int.MAX_VALUE
 
     /** Reflect the current from/to selection in the navigate inputs without re-triggering search. */
     private fun syncNavInputs() {
@@ -175,11 +195,19 @@ class MainActivity : Activity(), LocationListener {
     private fun setFrom(p: Place?) {
         from = p
         if (::startInput.isInitialized) { suppressSearch = true; startInput.setText(p?.name ?: ""); suppressSearch = false }
+        updateEndpoints()
     }
 
     private fun setTo(p: Place?) {
         to = p
         if (::endInput.isInitialized) { suppressSearch = true; endInput.setText(p?.name ?: ""); suppressSearch = false }
+        updateEndpoints()
+    }
+
+    /** Reflect the selected start/destination on the map as start/finish markers (both modes). */
+    private fun updateEndpoints() {
+        if (!::map.isInitialized) return
+        map.setEndpoints(from?.let { doubleArrayOf(it.lat, it.lon) }, to?.let { doubleArrayOf(it.lat, it.lon) })
     }
 
     private fun refreshView() {
@@ -197,8 +225,8 @@ class MainActivity : Activity(), LocationListener {
         }
     }
 
-    private fun selectLine(code: String) {
-        selectedLine = code; selectedDir = 0; mode = Mode.EXPLORE
+    private fun selectLine(code: String, dir: Int = 0) {
+        selectedLine = code; selectedDir = dir; mode = Mode.EXPLORE
         lineTextTime = LocalDateTime.now(Malta.ZONE)
         updateMapForMode(); refreshView()
     }
@@ -245,8 +273,19 @@ class MainActivity : Activity(), LocationListener {
         if (code == null) {
             textContent.addView(tv(getString(R.string.text_select_line), white, 17f, true))
             Thread {
-                val v = db.versionFor(LocalDate.now(Malta.ZONE)); val lines = db.allLines(v)
-                runOnUiThread { for (l in lines) textContent.addView(clickRow(listOf(l.color), l.code, l.name) { selectLine(l.code) }) }
+                val v = db.versionFor(LocalDate.now(Malta.ZONE))
+                val dirs = db.allLineDirections(v)
+                val byNum = allStops.associateBy { it.number }
+                val sorted = dirs.sortedWith(compareBy({ codeKey(it.code) }, { it.code }, { it.directionIndex }))
+                runOnUiThread {
+                    for (d in sorted) {
+                        val start = byNum[d.firstStop]?.display ?: "?"
+                        val end = byNum[d.lastStop]?.display ?: d.name.ifBlank { "?" }
+                        textContent.addView(clickRow(listOf(d.color), d.code, "$start  →  $end") {
+                            selectLine(d.code, d.directionIndex)
+                        })
+                    }
+                }
             }.start()
             return
         }
@@ -301,7 +340,7 @@ class MainActivity : Activity(), LocationListener {
         val itin = currentItinerary
         if (itin == null) {
             textContent.addView(tv(getString(R.string.text_no_route), grey))
-            textContent.addView(smallBtn(getString(R.string.plan_journey)) { showPlanner() })
+            textContent.addView(tv("Set from and to above, then tap Plan.", grey, 13f))
             return
         }
         textContent.addView(tv(getString(R.string.text_route), white, 17f, true))
@@ -379,41 +418,34 @@ class MainActivity : Activity(), LocationListener {
         Thread {
             val now = LocalDateTime.now(Malta.ZONE)
             val v = db.versionFor(now.toLocalDate())
-            val lines = db.linesForStop(stop.number, v)
-            val colorOf = lines.associate { it.code to it.color }
-            val board = db.departuresFrom(stop.number, now, 15)
+            val colorOf = db.linesForStop(stop.number, v).associate { it.code to it.color }
+            // first upcoming departure per line+direction (board is sorted by real time)
+            val firstPer = LinkedHashMap<String, Departure>()
+            for (d in db.departuresFrom(stop.number, now, 120)) {
+                val k = "${d.routeCode}/${d.directionIndex}"; if (!firstPer.containsKey(k)) firstPer[k] = d
+            }
+            val rows = firstPer.values.sortedWith(
+                compareBy({ codeKey(it.routeCode) }, { it.routeCode }, { it.directionIndex }))
             runOnUiThread {
                 val pad = (12 * resources.displayMetrics.density).toInt()
                 val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
-                val header = TextView(this).apply {
-                    text = if (lines.isEmpty()) "No lines serve this stop"
-                    else "Lines: " + lines.joinToString("  ") { it.code }
-                    setTextColor(grey); setPadding(0, 0, 0, pad)
+                var dlg: AlertDialog? = null
+                if (rows.isEmpty()) box.addView(tv("No departures from this stop today.", grey))
+                for (d in rows) {
+                    val mins = java.time.Duration.between(now, d.time).toMinutes()
+                    val cd = if (mins <= 0) "now" else "in $mins min"
+                    box.addView(clickRow(listOf(colorOf[d.routeCode] ?: white),
+                        "${d.routeCode}    →  ${d.towards}", "${Malta.hhmm(d.minutes)}    ·    $cd") {
+                        selectLine(d.routeCode, d.directionIndex); dlg?.dismiss()
+                    })
                 }
-                val list = ListView(this)
-                box.addView(header); box.addView(list)
-                val adapter = object : ArrayAdapter<Departure>(this, android.R.layout.simple_list_item_1,
-                    ArrayList(board)) {
-                    override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
-                        val d = getItem(pos)!!
-                        val mins = java.time.Duration.between(now, d.time).toMinutes()
-                        val cd = if (mins <= 0) "now" else "in $mins min"
-                        return colorRow(listOf(colorOf[d.routeCode] ?: white),
-                            "${d.routeCode}    →  ${d.towards}", "${Malta.hhmm(d.minutes)}    ·    $cd")
-                    }
-                }
-                list.adapter = adapter
-                val b = AlertDialog.Builder(this)
+                val place = Place(stop.display, stop.lat, stop.lon)
+                dlg = AlertDialog.Builder(this)
                     .setTitle(stop.display + "  ·  #${stop.number}")
-                    .setView(box)
-                    .setNegativeButton(R.string.close, null)
-                if (mode == Mode.NAVIGATE) {
-                    b.setPositiveButton(R.string.from_here) { _, _ -> setFrom(Place(stop.display, stop.lat, stop.lon)); toast("Start: ${stop.display}") }
-                    b.setNeutralButton(R.string.to_here) { _, _ -> setTo(Place(stop.display, stop.lat, stop.lon)); toast("Destination: ${stop.display}") }
-                }
-                val dlg = b.create()
-                list.setOnItemClickListener { _, _, p, _ -> adapter.getItem(p)?.let { selectLine(it.routeCode) }; dlg.dismiss() }
-                if (board.isEmpty()) { header.append("\n\nNo more departures today."); }
+                    .setView(android.widget.ScrollView(this).apply { addView(box) })
+                    .setPositiveButton(R.string.nav_from) { _, _ -> navFromMap(place, true) }
+                    .setNeutralButton(R.string.nav_to) { _, _ -> navFromMap(place, false) }
+                    .setNegativeButton(R.string.close, null).create()
                 dlg.show()
             }
         }.start()
@@ -435,28 +467,46 @@ class MainActivity : Activity(), LocationListener {
 
     // ---------------- long-press POI menu
     private fun showLongPressMenu(lat: Double, lon: Double, poi: Poi?) {
-        // Setting start/destination from the map is only offered in Navigate mode.
-        val nav = mode == Mode.NAVIGATE
-        val labels = ArrayList<String>(); val acts = ArrayList<() -> Unit>()
+        // Navigate: no menu — the point fills a from/to slot directly.
+        if (mode == Mode.NAVIGATE) { placeFromMap(lat, lon, poi); return }
+        // Explore: manage saved places, plus navigate-from / navigate-to.
+        val place = Place(poi?.name ?: "Dropped pin", poi?.lat ?: lat, poi?.lon ?: lon)
         if (poi == null) {
-            labels.add(getString(R.string.poi_store)); acts.add { storePoi(lat, lon) }
-            if (nav) {
-                labels.add(getString(R.string.set_from)); acts.add { setFrom(Place("Dropped pin", lat, lon)); toast("Start set") }
-                labels.add(getString(R.string.set_to)); acts.add { setTo(Place("Dropped pin", lat, lon)); toast("Destination set") }
-            }
-            AlertDialog.Builder(this).setItems(labels.toTypedArray()) { _, w -> acts[w]() }.show()
+            val items = arrayOf(getString(R.string.poi_store), getString(R.string.nav_from), getString(R.string.nav_to))
+            AlertDialog.Builder(this).setItems(items) { _, w ->
+                when (w) { 0 -> storePoi(lat, lon); 1 -> navFromMap(place, true); 2 -> navFromMap(place, false) }
+            }.show()
         } else {
-            if (nav) {
-                labels.add(getString(R.string.set_from)); acts.add { setFrom(Place(poi.name, poi.lat, poi.lon)); toast("Start: ${poi.name}") }
-                labels.add(getString(R.string.set_to)); acts.add { setTo(Place(poi.name, poi.lat, poi.lon)); toast("Destination: ${poi.name}") }
-            }
-            labels.add(getString(R.string.poi_delete)); acts.add {
-                AlertDialog.Builder(this).setMessage(R.string.poi_delete_confirm)
-                    .setPositiveButton(R.string.poi_delete) { _, _ ->
-                        PoiStore.remove(this, poi.id); pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
-                    }.setNegativeButton(R.string.close, null).show()
-            }
-            AlertDialog.Builder(this).setTitle(poi.name).setItems(labels.toTypedArray()) { _, w -> acts[w]() }.show()
+            val items = arrayOf(getString(R.string.nav_from), getString(R.string.nav_to), getString(R.string.poi_delete))
+            AlertDialog.Builder(this).setTitle(poi.name).setItems(items) { _, w ->
+                when (w) {
+                    0 -> navFromMap(place, true)
+                    1 -> navFromMap(place, false)
+                    2 -> AlertDialog.Builder(this).setMessage(R.string.poi_delete_confirm)
+                        .setPositiveButton(R.string.poi_delete) { _, _ ->
+                            PoiStore.remove(this, poi.id); pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
+                        }.setNegativeButton(R.string.close, null).show()
+                }
+            }.show()
+        }
+    }
+
+    /** Explore context menus: set from/to from a map point, mark it, and switch to Navigate. */
+    private fun navFromMap(place: Place, asFrom: Boolean) {
+        if (asFrom) setFrom(place) else setTo(place)
+        toast((if (asFrom) "From: " else "To: ") + place.name)
+        setMode(Mode.NAVIGATE)
+    }
+
+    /** Navigate: a long-pressed point goes to the focused field, else the first empty slot. */
+    private fun placeFromMap(lat: Double, lon: Double, poi: Poi?) {
+        val place = Place(poi?.name ?: "Dropped pin", poi?.lat ?: lat, poi?.lon ?: lon)
+        when {
+            searchTarget == SearchTarget.START -> { setFrom(place); toast("From: ${place.name}") }
+            searchTarget == SearchTarget.END -> { setTo(place); toast("To: ${place.name}") }
+            from == null -> { setFrom(place); toast("From: ${place.name}") }
+            to == null -> { setTo(place); toast("To: ${place.name}") }
+            else -> { setFrom(place); toast("From: ${place.name}") }
         }
     }
 
@@ -467,43 +517,6 @@ class MainActivity : Activity(), LocationListener {
                 val name = input.text.toString().ifBlank { "POI" }
                 PoiStore.add(this, name, lat, lon); pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
             }.setNegativeButton(R.string.close, null).show()
-    }
-
-    // ---------------- search (unified)
-    private fun showSearch(onPick: (SearchResult) -> Unit) {
-        val pad = (16 * resources.displayMetrics.density).toInt()
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
-        val input = EditText(this).apply {
-            hint = getString(R.string.search_hint); setSingleLine(); setTextColor(white); setHintTextColor(grey)
-        }
-        val list = ListView(this); box.addView(input); box.addView(list)
-        val adapter = object : ArrayAdapter<SearchResult>(this, android.R.layout.simple_list_item_2, android.R.id.text1, ArrayList()) {
-            override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
-                val v = super.getView(pos, cv, parent); val r = getItem(pos)!!
-                v.findViewById<TextView>(android.R.id.text1).apply { text = r.label; setTextColor(white) }
-                v.findViewById<TextView>(android.R.id.text2).apply { text = r.sublabel; setTextColor(grey) }
-                return v
-            }
-        }
-        list.adapter = adapter
-        val dlg = AlertDialog.Builder(this).setTitle(R.string.search_title).setView(box)
-            .setNegativeButton(R.string.close, null).create()
-        val handler = android.os.Handler(mainLooper)
-        var pending: Runnable? = null
-        fun refresh() {
-            val r = searchIndex?.search(input.text.toString()) ?: emptyList()
-            adapter.clear(); adapter.addAll(r); adapter.notifyDataSetChanged()
-        }
-        input.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(s: android.text.Editable?) {
-                pending?.let { handler.removeCallbacks(it) }
-                val run = Runnable { refresh() }; pending = run; handler.postDelayed(run, 140)
-            }
-            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
-        })
-        list.setOnItemClickListener { _, _, p, _ -> adapter.getItem(p)?.let { onPick(it) }; dlg.dismiss() }
-        dlg.show()
     }
 
     private fun handleMapPick(r: SearchResult) {
@@ -607,79 +620,52 @@ class MainActivity : Activity(), LocationListener {
             .setPositiveButton(R.string.close, null).show()
     }
 
-    // ---------------- planner
-    private fun showPlanner() {
+    // ---------------- planner (inline: start / destination / time / plan live in the top bar)
+    private fun runPlan() {
         if (DbManager.db == null) { toast(getString(R.string.db_none)); return }
-        val pad = (16 * resources.displayMetrics.density).toInt()
+        val f = from; val t = to
+        if (f == null || t == null) { toast(getString(R.string.planner_need)); return }
+        val db = DbManager.db ?: return
+        val depart = departWhen ?: LocalDateTime.now(Malta.ZONE)
+        planBtn.isEnabled = false
+        Thread {
+            val res: List<Itinerary>; val stats: String
+            if (Settings.debug(this)) {
+                val cmp = runCatching { Planner.compare(db, allStops, f, t, depart) }.getOrDefault(emptyList())
+                res = cmp.firstOrNull { it.engine == Engine.RAPTOR }?.itineraries ?: emptyList()
+                stats = statsText(cmp)
+            } else {
+                val eng = Settings.engine(this)
+                val t0 = System.nanoTime()
+                res = runCatching { Planner.plan(db, allStops, f, t, depart, eng) }.getOrDefault(emptyList())
+                stats = "%s   %.1f ms · %d options".format(eng.name, (System.nanoTime() - t0) / 1_000_000.0, res.size)
+            }
+            runOnUiThread { planBtn.isEnabled = true; showItineraries(res, stats) }
+        }.start()
+    }
+
+    private fun showItineraries(res: List<Itinerary>, stats: String) {
+        if (res.isEmpty()) { toast(getString(R.string.planner_none)); return }
+        val pad = (12 * resources.displayMetrics.density).toInt()
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
-        val fromBtn = menuButton(); val toBtn = menuButton(); val timeBtn = menuButton(); val searchBtn = Button(this)
-        searchBtn.text = getString(R.string.planner_search)
-        val stats = TextView(this).apply {
-            setTextColor(grey); textSize = 11f; typeface = android.graphics.Typeface.MONOSPACE; setPadding(0, 8, 0, 8)
-        }
-        val list = ListView(this)
-        box.addView(fromBtn); box.addView(toBtn); box.addView(timeBtn); box.addView(searchBtn); box.addView(stats); box.addView(list)
-
-        fun refreshLabels() {
-            fromBtn.text = getString(R.string.planner_from, from?.name ?: getString(R.string.planner_choose_from))
-            toBtn.text = getString(R.string.planner_to, to?.name ?: getString(R.string.planner_choose_to))
-            timeBtn.text = getString(R.string.planner_time, departWhen?.format(fmt) ?: getString(R.string.planner_now))
-        }
-        refreshLabels()
-        fromBtn.setOnClickListener { showSearch { setFrom(it.asPlace()); refreshLabels() } }
-        toBtn.setOnClickListener { showSearch { setTo(it.asPlace()); refreshLabels() } }
-        timeBtn.setOnClickListener { pickDateTime { departWhen = it; refreshLabels() } }
-
-        val adapter = object : ArrayAdapter<Itinerary>(this, android.R.layout.simple_list_item_1, ArrayList()) {
-            override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
-                val it = getItem(pos)!!
-                val cols = it.busLegs.map { bl -> bl.color }.ifEmpty { listOf(grey) }
-                return colorRow(cols,
-                    "${hm(it.departMinutes)} → ${hm(it.arriveMinutes)}  (${it.arriveMinutes - it.departMinutes} min)",
-                    summary(it))
-            }
-        }
-        list.adapter = adapter
-        val dlg = AlertDialog.Builder(this).setTitle(R.string.planner_title).setView(box)
-            .setNegativeButton(R.string.close, null).create()
-        searchBtn.setOnClickListener {
-            val f = from; val t = to
-            if (f == null || t == null) { toast(getString(R.string.planner_need)); return@setOnClickListener }
-            val db = DbManager.db ?: return@setOnClickListener
-            val depart = departWhen ?: LocalDateTime.now(Malta.ZONE)
-            searchBtn.isEnabled = false; stats.text = "…"
-            Thread {
-                if (Settings.debug(this)) {
-                    val cmp = runCatching { Planner.compare(db, allStops, f, t, depart) }.getOrDefault(emptyList())
-                    runOnUiThread {
-                        searchBtn.isEnabled = true
-                        stats.text = statsText(cmp)
-                        val main = cmp.firstOrNull { it.engine == Engine.RAPTOR }?.itineraries ?: emptyList()
-                        adapter.clear(); adapter.addAll(main); adapter.notifyDataSetChanged()
-                        if (main.isEmpty()) toast(getString(R.string.planner_none))
-                    }
-                } else {
-                    val eng = Settings.engine(this)
-                    val t0 = System.nanoTime()
-                    val res = runCatching { Planner.plan(db, allStops, f, t, depart, eng) }.getOrDefault(emptyList())
-                    val ms = (System.nanoTime() - t0) / 1_000_000.0
-                    runOnUiThread {
-                        searchBtn.isEnabled = true
-                        stats.text = "%s   %.1f ms · %d options".format(eng.name, ms, res.size)
-                        adapter.clear(); adapter.addAll(res); adapter.notifyDataSetChanged()
-                        if (res.isEmpty()) toast(getString(R.string.planner_none))
-                    }
-                }
-            }.start()
-        }
-        list.setOnItemClickListener { _, _, p, _ ->
-            adapter.getItem(p)?.let { itin ->
-                dlg.dismiss()
+        if (stats.isNotBlank()) box.addView(TextView(this).apply {
+            text = stats; setTextColor(grey); textSize = 11f
+            typeface = android.graphics.Typeface.MONOSPACE; setPadding(0, 0, 0, pad)
+        })
+        var dlg: AlertDialog? = null
+        for (itin in res) {
+            val cols = itin.busLegs.map { bl -> bl.color }.ifEmpty { listOf(grey) }
+            box.addView(clickRow(cols,
+                "${hm(itin.departMinutes)} → ${hm(itin.arriveMinutes)}  (${itin.arriveMinutes - itin.departMinutes} min)",
+                summary(itin)) {
+                dlg?.dismiss()
                 currentItinerary = itin; mode = Mode.NAVIGATE; lastItinerary = itin
-                updateMapForMode(); refreshView()
-                confirmNavigate(itin)
-            }
+                updateMapForMode(); refreshView(); confirmNavigate(itin)
+            })
         }
+        dlg = AlertDialog.Builder(this).setTitle(R.string.planner_title)
+            .setView(android.widget.ScrollView(this).apply { addView(box) })
+            .setNegativeButton(R.string.close, null).create()
         dlg.show()
     }
 
@@ -720,11 +706,6 @@ class MainActivity : Activity(), LocationListener {
                 onPicked(LocalDateTime.of(y, mo + 1, d, h, mi))
             }, now.hour, now.minute, true).show()
         }, now.year, now.monthValue - 1, now.dayOfMonth).show()
-    }
-
-    private fun menuButton() = Button(this).apply {
-        setBackgroundColor(Color.TRANSPARENT); setTextColor(white)
-        textAlignment = View.TEXT_ALIGNMENT_VIEW_START; isAllCaps = false
     }
 
     // ---------------- navigation

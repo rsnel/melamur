@@ -16,6 +16,12 @@
     <string name="tab_explore">Explore</string>
     <string name="tab_navigate">Navigate</string>
     <string name="plan_journey">Plan a journey</string>
+    <string name="plan">Plan</string>
+    <string name="swap_ends">⇅</string>
+    <string name="cd_map">Map view</string>
+    <string name="cd_text">Text view</string>
+    <string name="cd_menu">Menu</string>
+    <string name="cd_swap">Swap start and destination</string>
     <string name="text_all_lines">All lines</string>
     <string name="text_show_map">Show on map</string>
     <string name="text_earlier">‹ earlier</string>
@@ -52,24 +58,22 @@
 
     <!-- stop / lines -->
     <string name="lines_at">Lines at this stop</string>
-    <string name="from_here">Set as start</string>
-    <string name="to_here">Set as destination</string>
+    <string name="nav_from">Navigate from</string>
+    <string name="nav_to">Navigate to</string>
     <string name="show_on_map">Show on map</string>
 
     <!-- POI -->
-    <string name="poi_store">Store POI</string>
+    <string name="poi_store">Add POI</string>
     <string name="poi_delete">Delete POI</string>
     <string name="poi_name">POI name</string>
     <string name="poi_delete_confirm">Delete this saved place?</string>
-    <string name="set_from">Set as start</string>
-    <string name="set_to">Set as destination</string>
 
     <!-- planner -->
     <string name="planner_title">Journey planner</string>
     <string name="planner_from">Start: %1$s</string>
     <string name="planner_to">Destination: %1$s</string>
-    <string name="planner_choose_from">Choose start</string>
-    <string name="planner_choose_to">Choose destination</string>
+    <string name="planner_choose_from">From</string>
+    <string name="planner_choose_to">To</string>
     <string name="planner_now">Now</string>
     <string name="planner_time">Depart: %1$s</string>
     <string name="planner_search">Search</string>
