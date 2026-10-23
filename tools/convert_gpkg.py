@@ -219,26 +219,26 @@ def main(gpkg, outdir, only=None):
     if only == 'walk':
         return main_walk_only(c, outdir)
     T = lambda kind, **kw: resolve(c, kind, **kw)
-    G = lambda t: geomcol(c, t)
+    GEOM = lambda t: geomcol(c, t)
     # land: union of the regions (admin level 1207) approximates the coastline
     land = T('adminareas_a', hint="\nThe land polygon comes from this layer. To build only the walk graph "
                                   "and keep your current map, run with:  --only walk")
-    for _, r in geoms(c, "select %s from %s where code=1207" % (G(land), land)):
+    for _, r in geoms(c, "select %s from %s where code=1207" % (GEOM(land), land)):
         add(0, 1, r, 3)
     t = T('landuse_a')
-    for (fc,), r in geoms(c, "select %s,fclass from %s" % (G(t), t)):
+    for (fc,), r in geoms(c, "select %s,fclass from %s" % (GEOM(t), t)):
         if fc in LANDUSE_STYLE:
             add(0, LANDUSE_STYLE[fc], r, 3)
     t = T('water_a')
-    for _, r in geoms(c, "select %s from %s" % (G(t), t)):
+    for _, r in geoms(c, "select %s from %s" % (GEOM(t), t)):
         add(0, 5, r, 3)
     t = T('buildings_a')
-    for _, r in geoms(c, "select %s from %s" % (G(t), t)):
+    for _, r in geoms(c, "select %s from %s" % (GEOM(t), t)):
         add(0, 6, r, 1.5)
     roads = []
     walk_ways = []   # un-simplified walkable ways, int metres, for walk.bin
     rt = T('roads')
-    for (fc, oneway), r in geoms(c, "select %s,fclass,oneway from %s" % (G(rt), rt)):
+    for (fc, oneway), r in geoms(c, "select %s,fclass,oneway from %s" % (GEOM(rt), rt)):
         fc = fclass_of(fc)
         if fc in ROAD_STYLE:
             add(1, ROAD_STYLE[fc], r, 1.5)
@@ -272,7 +272,7 @@ def main(gpkg, outdir, only=None):
 
     stops, moved = [], 0
     t = T('transport')
-    for (osm_id, name), r in geoms(c, "select %s,osm_id,name from %s where fclass='bus_stop'" % (G(t), t)):
+    for (osm_id, name), r in geoms(c, "select %s,osm_id,name from %s where fclass='bus_stop'" % (GEOM(t), t)):
         lon, lat = r[0][0]
         sx, sy = proj(lon, lat)
         best = None
@@ -311,6 +311,10 @@ def main(gpkg, outdir, only=None):
             if not left_ok:
                 rec['moved'] = True
         stops.append(rec)
+    if not stops:
+        kinds = [r[0] for r in c.execute("select distinct fclass from %s" % t)]
+        sys.exit("No fclass='bus_stop' rows in %s, so stops.json was NOT written.\n"
+                 "fclass values present: %s" % (t, ", ".join(sorted(str(k) for k in kinds))))
     with open(os.path.join(outdir, 'stops.json'), 'w') as f:
         json.dump(stops, f, ensure_ascii=False, separators=(',', ':'))
 
@@ -319,7 +323,7 @@ def main(gpkg, outdir, only=None):
                   'village': 2, 'hamlet': 3, 'locality': 4}
     places = []
     t = T('places')
-    for (fc, name), r in geoms(c, "select %s,fclass,name from %s where name is not null" % (G(t), t)):
+    for (fc, name), r in geoms(c, "select %s,fclass,name from %s where name is not null" % (GEOM(t), t)):
         if fc not in PLACE_RANK:
             continue
         lon, lat = r[0][0]
@@ -330,7 +334,7 @@ def main(gpkg, outdir, only=None):
     SC = 700.0
     seen = set()
     streets = []
-    for (name,), r in geoms(c, "select %s,name from %s where name is not null and name<>''" % (G(rt), rt)):
+    for (name,), r in geoms(c, "select %s,name from %s where name is not null and name<>''" % (GEOM(rt), rt)):
         for ring in r:
             if len(ring) < 2:
                 continue
@@ -362,7 +366,7 @@ def main(gpkg, outdir, only=None):
         if layer is None:
             continue
         worship = kind == 'pofw'
-        for (fc, name), r in geoms(c, "select %s,fclass,name from %s where name is not null" % (G(layer), layer)):
+        for (fc, name), r in geoms(c, "select %s,fclass,name from %s where name is not null" % (GEOM(layer), layer)):
             if not worship and fc not in LAND_FCLASS:
                 continue
             ring = r[0]
