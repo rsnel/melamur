@@ -15,7 +15,11 @@ On one-way roads the serving direction is fixed, so a stop that was mapped on
 the right side is moved to the left kerb. The stop is placed KERB metres from
 the road centre line.
 
-usage: convert_gpkg.py malta.gpkg outdir
+usage: convert_gpkg.py malta.gpkg outdir              all assets
+       convert_gpkg.py malta.gpkg outdir --only walk  only walk.bin (keeps current map)
+       convert_gpkg.py malta.gpkg --tables            list the gpkg's layers + columns
+
+Layer names are discovered (classic gis_osm_*_free or Geofabrik's 2026 v0.8 names).
 """
 import json, math, os, sqlite3, struct, sys
 
@@ -63,9 +67,53 @@ def parse_wkb(b, o=0, out=None):
     return out, o
 
 def geoms(c, sql):
-    for row in c.execute(sql):
+    try:
+        cur = c.execute(sql)
+    except sqlite3.OperationalError as e:
+        sys.exit("SQL failed: %s\n  %s\n(table columns: see --tables)" % (e, sql))
+    for row in cur:
+        if row[0] is None:
+            continue
         rings, _ = parse_wkb(gpkg_wkb(row[0]))
         yield row[1:], rings
+
+# ---------- table discovery: Geofabrik renamed layers in 2026 (standard v0.8),
+# so resolve each logical layer to whatever table this gpkg actually has.
+def tables(c):
+    try:
+        return [r[0] for r in c.execute("select table_name from gpkg_contents")]
+    except sqlite3.OperationalError:
+        return [r[0] for r in c.execute("select name from sqlite_master where type='table'")]
+
+def resolve(c, kind, required=True, hint=''):
+    """kind like 'roads', 'landuse_a', 'adminareas_a'. Accepts the classic
+    gis_osm_<kind>_free(_1) names and the v0.8 style osm_<kind>(_v08)(_1)."""
+    import re
+    ts = tables(c)
+    for t in ('gis_osm_%s_free' % kind, 'gis_osm_%s_free_1' % kind):
+        if t in ts:
+            return t
+    pat = re.compile(r'^(gis_)?osm_%s(_free)?(_v\d+)?(_1)?$' % re.escape(kind))
+    for t in ts:
+        if pat.match(t):
+            return t
+    if required:
+        sys.exit("No '%s' layer in this gpkg.%s\nTables found:\n  %s"
+                 % (kind, hint, "\n  ".join(sorted(ts))))
+    print("warning: no '%s' layer, skipping" % kind)
+    return None
+
+def geomcol(c, t):
+    try:
+        r = c.execute("select column_name from gpkg_geometry_columns where table_name=?", (t,)).fetchone()
+        if r:
+            return r[0]
+    except sqlite3.OperationalError:
+        pass
+    return 'geom'
+
+def columns(c, t):
+    return [r[1] for r in c.execute("pragma table_info(%s)" % t)]
 
 # ---------- Douglas-Peucker
 def simplify(p, eps):
@@ -120,23 +168,78 @@ LANDUSE_STYLE = {'residential': 2, 'industrial': 2, 'commercial': 2, 'retail': 2
                  'park': 3, 'grass': 3, 'forest': 3, 'meadow': 3, 'scrub': 3,
                  'farmland': 4, 'orchard': 4, 'vineyard': 4, 'allotments': 4}
 
-def main(gpkg, outdir):
+def walk_way(ring):
+    """One way as un-simplified int-metre points (shared junctions stay exact)."""
+    w = []
+    for q in ring:
+        x, y = proj(*q)
+        xi, yi = int(round(x)), int(round(y))
+        if not (-32767 < xi < 32767 and -32767 < yi < 32767):
+            continue
+        if not w or w[-1] != (xi, yi):
+            w.append((xi, yi))
+    return w if len(w) >= 2 else None
+
+def write_walk(outdir, walk_ways):
+    """walk.bin: walkable ways, un-simplified, for the app's foot router.
+    Ways longer than 65535 points are split into chunks sharing a vertex."""
+    def chunks(w):
+        i = 0
+        while i < len(w):
+            yield w[i:i + 65535]
+            i += 65535 - 1
+    out = [ck for w in walk_ways for ck in chunks(w) if len(ck) >= 2]
+    with open(os.path.join(outdir, 'walk.bin'), 'wb') as f:
+        f.write(b'MLWK'); f.write(struct.pack('<ddI', LAT0, LON0, len(out)))
+        for w in out:
+            f.write(struct.pack('<H', len(w)))
+            f.write(struct.pack('<%dh' % (2 * len(w)), *[v for q in w for v in q]))
+    return out
+
+def fclass_of(fc):
+    fc = fc or ''
+    return 'path' if fc.startswith('track') else fc
+
+def main_walk_only(c, outdir):
+    rt = resolve(c, 'roads')
+    ways = []
+    for (fc,), r in geoms(c, "select %s,fclass from %s" % (geomcol(c, rt), rt)):
+        if fclass_of(fc) in WALK_ROADS:
+            for ring in r:
+                w = walk_way(ring)
+                if w:
+                    ways.append(w)
+    os.makedirs(outdir, exist_ok=True)
+    out = write_walk(outdir, ways)
+    print('roads table', rt, '| walk ways', len(out),
+          '| walk.bin bytes', os.path.getsize(os.path.join(outdir, 'walk.bin')))
+
+def main(gpkg, outdir, only=None):
     c = sqlite3.connect(gpkg)
+    if only == 'walk':
+        return main_walk_only(c, outdir)
+    T = lambda kind, **kw: resolve(c, kind, **kw)
+    G = lambda t: geomcol(c, t)
     # land: union of the regions (admin level 1207) approximates the coastline
-    for _, r in geoms(c, "select geom from gis_osm_adminareas_a_free where code=1207"):
+    land = T('adminareas_a', hint="\nThe land polygon comes from this layer. To build only the walk graph "
+                                  "and keep your current map, run with:  --only walk")
+    for _, r in geoms(c, "select %s from %s where code=1207" % (G(land), land)):
         add(0, 1, r, 3)
-    for (fc,), r in geoms(c, "select geom,fclass from gis_osm_landuse_a_free"):
+    t = T('landuse_a')
+    for (fc,), r in geoms(c, "select %s,fclass from %s" % (G(t), t)):
         if fc in LANDUSE_STYLE:
             add(0, LANDUSE_STYLE[fc], r, 3)
-    for _, r in geoms(c, "select geom from gis_osm_water_a_free"):
+    t = T('water_a')
+    for _, r in geoms(c, "select %s from %s" % (G(t), t)):
         add(0, 5, r, 3)
-    for _, r in geoms(c, "select geom from gis_osm_buildings_a_free"):
+    t = T('buildings_a')
+    for _, r in geoms(c, "select %s from %s" % (G(t), t)):
         add(0, 6, r, 1.5)
     roads = []
     walk_ways = []   # un-simplified walkable ways, int metres, for walk.bin
-    for (fc, oneway), r in geoms(c, "select geom,fclass,oneway from gis_osm_roads_free"):
-        if fc.startswith('track'):
-            fc = 'path'
+    rt = T('roads')
+    for (fc, oneway), r in geoms(c, "select %s,fclass,oneway from %s" % (G(rt), rt)):
+        fc = fclass_of(fc)
         if fc in ROAD_STYLE:
             add(1, ROAD_STYLE[fc], r, 1.5)
         if fc in BUS_ROADS:
@@ -144,15 +247,8 @@ def main(gpkg, outdir):
                 roads.append((fc, oneway, [proj(*q) for q in ring]))
         if fc in WALK_ROADS:
             for ring in r:
-                w = []
-                for q in ring:
-                    x, y = proj(*q)
-                    xi, yi = int(round(x)), int(round(y))
-                    if not (-32767 < xi < 32767 and -32767 < yi < 32767):
-                        continue
-                    if not w or w[-1] != (xi, yi):
-                        w.append((xi, yi))
-                if len(w) >= 2:
+                w = walk_way(ring)
+                if w:
                     walk_ways.append(w)
 
     os.makedirs(outdir, exist_ok=True)
@@ -162,19 +258,7 @@ def main(gpkg, outdir):
             f.write(struct.pack('<BBH', layer, style, len(p)))
             f.write(struct.pack('<%dh' % (2 * len(p)), *[v for q in p for v in q]))
 
-    # ---- walk.bin: walkable ways, un-simplified, for the app's foot router.
-    # Ways are split into chunks of <=65535 points sharing a boundary vertex.
-    def chunks(w):
-        i = 0
-        while i < len(w):
-            yield w[i:i + 65535]
-            i += 65535 - 1   # overlap one vertex so the chunks stay connected
-    walk_out = [ck for w in walk_ways for ck in chunks(w) if len(ck) >= 2]
-    with open(os.path.join(outdir, 'walk.bin'), 'wb') as f:
-        f.write(b'MLWK'); f.write(struct.pack('<ddI', LAT0, LON0, len(walk_out)))
-        for w in walk_out:
-            f.write(struct.pack('<H', len(w)))
-            f.write(struct.pack('<%dh' % (2 * len(w)), *[v for q in w for v in q]))
+    walk_out = write_walk(outdir, walk_ways)
 
     # ---- spatial grid of road segments for snapping
     G = 100.0
@@ -187,7 +271,8 @@ def main(gpkg, outdir):
                     grid.setdefault((gx, gy), []).append((ri, i))
 
     stops, moved = [], 0
-    for (osm_id, name), r in geoms(c, "select geom,osm_id,name from gis_osm_transport_free where fclass='bus_stop'"):
+    t = T('transport')
+    for (osm_id, name), r in geoms(c, "select %s,osm_id,name from %s where fclass='bus_stop'" % (G(t), t)):
         lon, lat = r[0][0]
         sx, sy = proj(lon, lat)
         best = None
@@ -233,7 +318,8 @@ def main(gpkg, outdir):
     PLACE_RANK = {'national_capital': 0, 'city': 0, 'town': 1, 'suburb': 2,
                   'village': 2, 'hamlet': 3, 'locality': 4}
     places = []
-    for (fc, name), r in geoms(c, "select geom,fclass,name from gis_osm_places_free where name is not null"):
+    t = T('places')
+    for (fc, name), r in geoms(c, "select %s,fclass,name from %s where name is not null" % (G(t), t)):
         if fc not in PLACE_RANK:
             continue
         lon, lat = r[0][0]
@@ -244,7 +330,7 @@ def main(gpkg, outdir):
     SC = 700.0
     seen = set()
     streets = []
-    for (name,), r in geoms(c, "select geom,name from gis_osm_roads_free where name is not null and name<>''"):
+    for (name,), r in geoms(c, "select %s,name from %s where name is not null and name<>''" % (G(rt), rt)):
         for ring in r:
             if len(ring) < 2:
                 continue
@@ -271,9 +357,12 @@ def main(gpkg, outdir):
     SCL = 500.0
     seen_l = set()
     landmarks = []
-    for layer in ('gis_osm_pois_free', 'gis_osm_pois_a_free', 'gis_osm_pofw_free'):
-        worship = layer == 'gis_osm_pofw_free'
-        for (fc, name), r in geoms(c, f"select geom,fclass,name from {layer} where name is not null"):
+    for kind in ('pois', 'pois_a', 'pofw'):
+        layer = T(kind, required=False)
+        if layer is None:
+            continue
+        worship = kind == 'pofw'
+        for (fc, name), r in geoms(c, "select %s,fclass,name from %s where name is not null" % (G(layer), layer)):
             if not worship and fc not in LAND_FCLASS:
                 continue
             ring = r[0]
@@ -296,4 +385,19 @@ def main(gpkg, outdir):
           'walk ways', len(walk_out), 'walk.bin bytes', os.path.getsize(os.path.join(outdir, 'walk.bin')))
 
 if __name__ == '__main__':
-    main(sys.argv[1], sys.argv[2])
+    args = sys.argv[1:]
+    if '--tables' in args:               # diagnostic: what layers/columns does this gpkg have?
+        args.remove('--tables')
+        c = sqlite3.connect(args[0])
+        for t in sorted(tables(c)):
+            try:
+                print(t, '->', ', '.join(columns(c, t)))
+            except sqlite3.OperationalError:
+                print(t)
+        sys.exit(0)
+    only = None
+    if '--only' in args:
+        i = args.index('--only'); only = args[i + 1]; del args[i:i + 2]
+    if len(args) != 2:
+        sys.exit(__doc__)
+    main(args[0], args[1], only)
