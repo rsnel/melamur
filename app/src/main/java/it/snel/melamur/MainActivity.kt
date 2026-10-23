@@ -102,6 +102,7 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var navCancel: Button
     private var searching = false
     private var showLegStops = false
+    @Volatile private var lineColorCache: Map<String, List<Int>> = emptyMap()
     private val tabOn = Color.rgb(238, 0, 0)
     private val tabOff = Color.rgb(60, 60, 60)
     private val iconOff = Color.rgb(150, 150, 150)
@@ -323,8 +324,11 @@ class MainActivity : Activity(), LocationListener {
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             .apply { marginEnd = (6 * resources.displayMetrics.density).toInt() }
     }
-    private fun clickRow(colors: List<Int>, line1: String, line2: String, onClick: () -> Unit): View =
-        colorRow(colors, line1, line2).apply { setOnClickListener { onClick() } }
+    private fun clickRow(swatches: List<List<Int>>, line1: String, line2: String, onClick: () -> Unit): View =
+        colorRow(swatches, line1, line2).apply { setOnClickListener { onClick() } }
+
+    /** A line's direction colours from route_shape (distinct, by direction); fallback if unknown yet. */
+    private fun lineColors(code: String, fallback: Int): List<Int> = lineColorCache[code] ?: listOf(fallback)
 
     private fun buildTextPanel() {
         textContent.removeAllViews()
@@ -346,7 +350,7 @@ class MainActivity : Activity(), LocationListener {
                     for (d in sorted) {
                         val start = byNum[d.firstStop]?.display ?: "?"
                         val end = byNum[d.lastStop]?.display ?: d.name.ifBlank { "?" }
-                        textContent.addView(clickRow(listOf(d.color), d.code, "$start  →  $end") {
+                        textContent.addView(clickRow(listOf(lineColors(d.code, d.color)), d.code, "$start  →  $end") {
                             selectLine(d.code, d.directionIndex)
                         })
                     }
@@ -450,7 +454,7 @@ class MainActivity : Activity(), LocationListener {
                 textContent.addView(tv("Walk $m m to ${leg.toName}", white, 15f))
             }
             is BusLeg -> {
-                textContent.addView(clickRow(listOf(leg.color),
+                textContent.addView(clickRow(listOf(lineColors(leg.routeCode, leg.color)),
                     "${Malta.hhmm(leg.boardMinutes)}  ${leg.routeCode} → ${leg.towards}",
                     "${leg.fromName}  →  ${leg.toName}  (${Malta.hhmm(leg.alightMinutes)})") {})
                 mids[leg.tripId]?.forEach { s ->
@@ -510,6 +514,9 @@ class MainActivity : Activity(), LocationListener {
         val v = db.versionFor(LocalDate.now(Malta.ZONE))
         val stops = db.allStops(v)
         val bs = stops.map { it.asBusStop() }
+        // each line's direction colours (route_shape.color), distinct, in direction order
+        lineColorCache = db.allLineDirections(v).groupBy { it.code }
+            .mapValues { (_, ds) -> ds.sortedBy { it.directionIndex }.map { it.color }.distinct() }
         allStops = stops
         NavHub.stops = stops.associateBy { it.number }
         val first = db.firstValidFrom()
@@ -550,7 +557,7 @@ class MainActivity : Activity(), LocationListener {
                 for (d in rows) {
                     val mins = java.time.Duration.between(now, d.time).toMinutes()
                     val cd = if (mins <= 0) "now" else "in $mins min"
-                    box.addView(clickRow(listOf(colorOf[d.routeCode] ?: white),
+                    box.addView(clickRow(listOf(lineColors(d.routeCode, colorOf[d.routeCode] ?: white)),
                         "${d.routeCode}    →  ${d.towards}", "${Malta.hhmm(d.minutes)}    ·    $cd") {
                         selectLine(d.routeCode, d.directionIndex); dlg?.dismiss()
                     })
@@ -778,7 +785,7 @@ class MainActivity : Activity(), LocationListener {
         })
         var dlg: AlertDialog? = null
         for (itin in res) {
-            val cols = itin.busLegs.map { bl -> bl.color }.ifEmpty { listOf(grey) }
+            val cols = itin.busLegs.map { bl -> lineColors(bl.routeCode, bl.color) }.ifEmpty { listOf(listOf(grey)) }
             box.addView(clickRow(cols,
                 "${hm(itin.departMinutes)} → ${hm(itin.arriveMinutes)}  (${itin.arriveMinutes - itin.departMinutes} min)",
                 summary(itin)) {
@@ -976,16 +983,18 @@ class MainActivity : Activity(), LocationListener {
         if (::tabExplore.isInitialized) refreshTabs()
     }
 
-    /** A list row with coloured line swatch(es) in a box before two text lines (white / grey). */
-    private fun colorRow(colors: List<Int>, line1: String, line2: String): View {
+    /**
+     * A list row: one swatch box per line (each box shows that line's direction
+     * colours — split when they differ) before two text lines (white / grey).
+     */
+    private fun colorRow(swatches: List<List<Int>>, line1: String, line2: String): View {
         val d = resources.displayMetrics.density
         fun px(v: Float) = (v * d).toInt()
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = android.view.Gravity.CENTER_VERTICAL
             setPadding(px(12f), px(10f), px(12f), px(10f))
         }
-        for (c in colors.take(4)) row.addView(View(this).apply {
-            setBackgroundColor(c)
+        for (sw in swatches.take(4)) row.addView(LineSwatch(this, sw).apply {
             layoutParams = LinearLayout.LayoutParams(px(16f), px(16f)).apply { marginEnd = px(5f) }
         })
         row.addView(LinearLayout(this).apply {

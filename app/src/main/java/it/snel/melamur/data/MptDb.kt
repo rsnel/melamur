@@ -49,8 +49,13 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         arrayOf("$v", "$v")
     ) { Stop(it.getInt(0), it.getString(1) ?: "", it.getStringOrNull(2), it.getDouble(3), it.getDouble(4)) }
 
-    /** Routes that serve [stopNumber], with MPT's drawing colour. */
-    fun linesForStop(stopNumber: Int, v: Int): List<Line> = query(
+    /** Routes that serve [stopNumber], coloured from route_shape (first direction). */
+    fun linesForStop(stopNumber: Int, v: Int): List<Line> = linesForStopRaw(stopNumber, v).map { l ->
+        val sc = shapeColors(l.code, v)
+        sc.keys.minOrNull()?.let { l.copy(color = sc.getValue(it)) } ?: l
+    }
+
+    private fun linesForStopRaw(stopNumber: Int, v: Int): List<Line> = query(
         "SELECT DISTINCT vsr.route_code, r.name, r.kml_color FROM v_stop_routes vsr " +
             "JOIN route r ON r.code=vsr.route_code AND r.from_version<=? AND (r.to_version IS NULL OR r.to_version>?) " +
             "WHERE vsr.stop_number=? AND vsr.from_version<=? AND (vsr.to_version IS NULL OR vsr.to_version>?) " +
