@@ -12,9 +12,11 @@ import android.view.View
 import kotlin.math.min
 
 /**
- * 3-second loading screen: the bus drives in from the right as "Mela" appears,
- * then "Mur" appears, and the bus drives off to the left. Credits OpenStreetMap
- * and Malta Public Transport.
+ * 5-second loading screen under a Maltese cross + "MALTA" lockup: a bus drives
+ * in from the right and stops, then leaves; a boat (lower, on the water) drives
+ * in and stops, then leaves; a second bus drives in. "Mela" fades in until the
+ * boat has stopped, then "Mur" fades in (both red). Credits OpenStreetMap and
+ * Malta Public Transport.
  */
 class SplashActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -29,12 +31,12 @@ class SplashActivity : Activity() {
     private class SplashView(a: Activity, val onDone: () -> Unit) : View(a) {
         private val dp = resources.displayMetrics.density
         private val start = System.nanoTime()
-        private val dur = 3000L
+        private val dur = 5000L
         private val bus: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_logo, a.theme) }.getOrNull()
         private val boat: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_boat, a.theme) }.getOrNull()
         private val cross: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_maltese_cross, a.theme) }.getOrNull()
         private val red = Color.rgb(238, 0, 0)
-        private val mela = textPaint(Color.WHITE)
+        private val mela = textPaint(red)
         private val mur = textPaint(red)
         // "MALTA" in letter-spaced small caps (serif) below the cross
         private val malta = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -69,35 +71,44 @@ class SplashActivity : Activity() {
             malta.alpha = (((el - 300) / 500f).coerceIn(0f, 1f) * 255).toInt()
             c.drawText("MALTA", w / 2f + malta.letterSpacing * malta.textSize / 2f, cty + cs + m * 0.09f, malta)
 
-            val cyText = h * 0.70f
-            val size = min(w, h) * 0.13f
+            // vehicles: bus drives in from the right and stops, then leaves; the
+            // boat (lower, on the water) drives in and stops, then leaves; a
+            // second bus drives in. Malta drives on the left, so exits go left.
+            val vW = w * 0.34f; val vH = vW * 0.6f
+            val yBus = h * 0.46f; val yBoat = h * 0.62f
+            val boatStop = 3300f
+            fun driveStop(d: Drawable?, yTop: Float, tIn: Float, tHold: Float, tOut: Float, tEnd: Float) {
+                if (d == null || el < tIn || el > tEnd) return
+                val xStart = w + vW; val xMid = (w - vW) / 2f; val xEnd = -vW * 1.3f
+                val x = when {
+                    el < tHold -> xStart + (xMid - xStart) * ease(((el - tIn) / (tHold - tIn)).coerceIn(0f, 1f))
+                    el < tOut -> xMid
+                    else -> xMid + (xEnd - xMid) * ease(((el - tOut) / (tEnd - tOut)).coerceIn(0f, 1f))
+                }
+                d.setBounds(x.toInt(), yTop.toInt(), (x + vW).toInt(), (yTop + vH).toInt()); d.draw(c)
+            }
+            driveStop(bus, yBus, 300f, 1200f, 1900f, 2500f)
+            driveStop(boat, yBoat, 2500f, boatStop, 4100f, 4700f)
+            bus?.let {                                   // second bus drives in near the end
+                val t0 = 4400f
+                if (el >= t0) {
+                    val xStart = w + vW; val xMid = (w - vW) / 2f
+                    val x = xStart + (xMid - xStart) * ease(((el - t0) / 900f).coerceIn(0f, 1f))
+                    it.setBounds(x.toInt(), yBus.toInt(), (x + vW).toInt(), (yBus + vH).toInt()); it.draw(c)
+                }
+            }
+
+            // "Mela" fades in until the boat has stopped; "Mur" fades in after. Both red.
+            val cyText = h * 0.82f
+            val size = m * 0.13f
             mela.textSize = size; mur.textSize = size
-            // word reveal
-            val melaA = ((el - 300) / 500f).coerceIn(0f, 1f)
-            val murA = ((el - 1100) / 500f).coerceIn(0f, 1f)
             val gap = size * 0.1f
             val wMela = mela.measureText("Mela"); val wMur = mur.measureText("Mur")
-            val total = wMela + gap + wMur
-            val x0 = (w - total) / 2
-            mela.alpha = (melaA * 255).toInt()
-            mur.alpha = (murA * 255).toInt()
+            val x0 = (w - (wMela + gap + wMur)) / 2
+            mela.alpha = (((el - 1200f) / (boatStop - 1200f)).coerceIn(0f, 1f) * 255).toInt()
+            mur.alpha = (((el - boatStop) / 900f).coerceIn(0f, 1f) * 255).toInt()
             c.drawText("Mela", x0 + wMela / 2, cyText, mela)
             c.drawText("Mur", x0 + wMela + gap + wMur / 2, cyText, mur)
-
-            // vehicles cross the strip, each driving in from the right and out to
-            // the left (Malta drives on the left): empty -> bus -> boat -> bus
-            val vW = w * 0.34f; val vH = vW * 0.6f
-            val yBus = h * 0.52f
-            fun pass(d: Drawable?, t0: Float, t1: Float) {
-                if (d == null || el < t0 || el > t1) return
-                val p = ease(((el - t0) / (t1 - t0)).coerceIn(0f, 1f))
-                val xStart = w + vW; val xEnd = -vW * 1.3f
-                val x = xStart + (xEnd - xStart) * p
-                d.setBounds(x.toInt(), yBus.toInt(), (x + vW).toInt(), (yBus + vH).toInt()); d.draw(c)
-            }
-            pass(bus, 250f, 1150f)
-            pass(boat, 1150f, 2050f)
-            pass(bus, 2050f, 2950f)
 
             c.drawText("Timetables © Malta Public Transport", w / 2, h - 46 * dp, credit)
             c.drawText("Map data © OpenStreetMap contributors", w / 2, h - 28 * dp, credit)
