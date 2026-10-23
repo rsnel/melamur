@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.view.View
@@ -30,9 +31,15 @@ class SplashActivity : Activity() {
         private val start = System.nanoTime()
         private val dur = 3000L
         private val bus: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_logo, a.theme) }.getOrNull()
+        private val cross: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_maltese_cross, a.theme) }.getOrNull()
         private val red = Color.rgb(225, 6, 0)
         private val mela = textPaint(Color.WHITE)
         private val mur = textPaint(red)
+        // "MALTA" in letter-spaced small caps (serif) below the cross
+        private val malta = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE; textAlign = Paint.Align.CENTER
+            typeface = Typeface.create(Typeface.SERIF, Typeface.NORMAL); letterSpacing = 0.5f
+        }
         private val credit = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(150, 150, 150); textSize = 12 * dp; textAlign = Paint.Align.CENTER
         }
@@ -49,7 +56,19 @@ class SplashActivity : Activity() {
             val el = (System.nanoTime() - start) / 1_000_000f
             val t = (el / dur).coerceIn(0f, 1f)
             val w = width.toFloat(); val h = height.toFloat()
-            val cyText = h * 0.46f
+            val m = min(w, h)
+
+            // Maltese cross in the upper region, with "MALTA" below it
+            val cs = m * 0.26f; val cxp = (w - cs) / 2f; val cty = h * 0.09f
+            cross?.let {
+                it.alpha = ((el / 600f).coerceIn(0f, 1f) * 255).toInt()
+                it.setBounds(cxp.toInt(), cty.toInt(), (cxp + cs).toInt(), (cty + cs).toInt()); it.draw(c)
+            }
+            malta.textSize = m * 0.055f
+            malta.alpha = (((el - 300) / 500f).coerceIn(0f, 1f) * 255).toInt()
+            c.drawText("MALTA", w / 2f + malta.letterSpacing * malta.textSize / 2f, cty + cs + m * 0.09f, malta)
+
+            val cyText = h * 0.70f
             val size = min(w, h) * 0.13f
             mela.textSize = size; mur.textSize = size
             // word reveal
@@ -66,7 +85,7 @@ class SplashActivity : Activity() {
 
             // bus: in from right (0-1s), hold, out to left (1.8-3s)
             val busW = w * 0.34f; val busH = busW * 0.6f
-            val yBus = h * 0.28f
+            val yBus = h * 0.52f
             val enterT = ease((el / 900f).coerceIn(0f, 1f))
             val exitT = ease(((el - 1800) / 1100f).coerceIn(0f, 1f))
             val xIn = w + busW; val xMid = (w - busW) / 2; val xOut = -busW * 1.2f
