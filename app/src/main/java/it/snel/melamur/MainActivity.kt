@@ -377,8 +377,11 @@ class MainActivity : Activity(), LocationListener {
                 val headway = gap?.let { "   ·   next bus in $it min" } ?: if (trip != null) "   ·   last trip" else ""
                 textContent.addView(tv("Trip departing ${trip?.let { Malta.hhmm(it.minutes) } ?: "—"}$headway", grey, 13f))
                 for (s in stops) {
-                    val nm = s.number?.let { byNum[it]?.display } ?: s.name
-                    textContent.addView(tv("${Malta.hhmm(s.minutes)}    $nm", white, 15f))
+                    val stop = s.number?.let { byNum[it] }
+                    val nm = stop?.display ?: s.name
+                    val row = tv("${Malta.hhmm(s.minutes)}    $nm", white, 15f)
+                    if (stop != null) row.setOnClickListener { showStop(stop) }  // → map + stop info
+                    textContent.addView(row)
                 }
                 if (stops.isEmpty()) textContent.addView(tv("No trips found for this time.", grey))
             }
