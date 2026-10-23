@@ -28,8 +28,15 @@ class RaptorData(
     val routeMeta: Array<Pair<String, Int>>,               // route -> (routeCode, direction)
     val routesAtStop: Array<IntArray>,                     // stop -> flattened [routeIdx, pos, ...]
     val transfers: Array<IntArray>,                        // stop -> flattened [toIdx, walkSec, ...]
+    val conn: Connections,                                 // elementary connections, sorted by departure (for CSA)
 ) {
     val nStops get() = stopNums.size
+
+    /** Elementary connections for CSA: parallel arrays sorted by departure minute. */
+    class Connections(
+        val depT: IntArray, val arrT: IntArray, val depStop: IntArray, val arrStop: IntArray,
+        val route: IntArray, val trip: IntArray, val pos: IntArray,
+    ) { val size get() = depT.size }
 
     companion object {
         const val WALK_SPEED = 1.3
@@ -59,7 +66,28 @@ class RaptorData(
             val routesAtStop = Array(n) { ras[it].toIntArray() }
 
             return RaptorData(stopNums, idxOf, lat, lon, routeStops, routeTripsMin, routeTripIds, routeMeta,
-                routesAtStop, buildTransfers(n, lat, lon))
+                routesAtStop, buildTransfers(n, lat, lon), buildConnections(routeStops, routeTripsMin))
+        }
+
+        private fun buildConnections(routeStops: Array<IntArray>, routeTripsMin: Array<Array<IntArray>>): Connections {
+            var count = 0
+            for (r in routeStops.indices) count += routeTripsMin[r].size * (routeStops[r].size - 1).coerceAtLeast(0)
+            val depT = IntArray(count); val arrT = IntArray(count); val depS = IntArray(count); val arrS = IntArray(count)
+            val rt = IntArray(count); val tp = IntArray(count); val ps = IntArray(count)
+            var i = 0
+            for (r in routeStops.indices) {
+                val stops = routeStops[r]
+                for (t in routeTripsMin[r].indices) {
+                    val m = routeTripsMin[r][t]
+                    for (p in 0 until stops.size - 1) {
+                        depT[i] = m[p]; arrT[i] = m[p + 1]; depS[i] = stops[p]; arrS[i] = stops[p + 1]
+                        rt[i] = r; tp[i] = t; ps[i] = p; i++
+                    }
+                }
+            }
+            val order = (0 until count).sortedBy { depT[it] }.toIntArray()
+            fun reorder(a: IntArray) = IntArray(count) { a[order[it]] }
+            return Connections(reorder(depT), reorder(arrT), reorder(depS), reorder(arrS), reorder(rt), reorder(tp), reorder(ps))
         }
 
         private fun buildTransfers(n: Int, lat: DoubleArray, lon: DoubleArray): Array<IntArray> {

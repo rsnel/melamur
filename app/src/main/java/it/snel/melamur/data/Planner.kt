@@ -10,12 +10,18 @@ data class Place(val name: String, val lat: Double, val lon: Double) {
     val x = Geo.x(lon); val y = Geo.y(lat)
 }
 
+/** Routing engine. All three run on the same network; see Raptor/Csa/McRaptor. */
+enum class Engine { RAPTOR, CSA, MCRAPTOR }
+
+/** Per-engine result for the comparison view. */
+class EngineResult(val engine: Engine, val millis: Double, val itineraries: List<Itinerary>) {
+    val bestArrive: Int? get() = itineraries.minOfOrNull { it.arriveMinutes }
+}
+
 /**
- * Journey planner using RAPTOR with walking (see Raptor.kt). It finds stops
- * within walking distance of the origin and destination, runs RAPTOR, and
- * converts each Pareto round (a fewer-transfers / later-arrival trade-off) into
- * an [Itinerary] with walk, bus and transfer legs. A direct walk is offered
- * when the origin and destination are close.
+ * Journey planner over RAPTOR, CSA and McRAPTOR (all with walking footpaths for
+ * origin access, inter-stop transfers and destination egress). [compare] runs
+ * all three for timing/agreement; [plan] returns one engine's itineraries.
  */
 object Planner {
     private const val WALK_SPEED = RaptorData.WALK_SPEED
@@ -36,7 +42,6 @@ object Planner {
     private fun walkSec(m: Double) = (m / WALK_SPEED).roundToInt()
     private fun dist(ax: Float, ay: Float, bx: Float, by: Float) = hypot((ax - bx).toDouble(), (ay - by).toDouble())
 
-    /** Stops within walking range of a place, as [stopIdx, walkSec]. */
     private fun near(d: RaptorData, p: Place): List<IntArray> {
         val hits = ArrayList<IntArray>()
         for (i in 0 until d.nStops) {
@@ -47,41 +52,65 @@ object Planner {
         return hits.sortedBy { it[1] }.take(NEAR)
     }
 
-    fun plan(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime): List<Itinerary> {
-        val date = departAt.toLocalDate()
-        val v = db.versionFor(date)
-        val bit = Malta.weekdayBit(date)
-        val departMin = departAt.hour * 60 + departAt.minute
-        val d = data(db, allStops, v, bit)
-        val access = near(d, from)
-        val egress = near(d, to).associate { it[0] to it[1] }
-        if (access.isEmpty() || egress.isEmpty()) return directOnly(from, to, departMin, date)
-
-        val journeys = Raptor.query(d, access, egress, departMin)
-        val byNum = allStops.associateBy { it.number }
-        val dirNames = HashMap<String, Map<Int, String>>()
-        val colors = HashMap<String, Pair<Map<Int, Int>, Int>>()
-        fun towards(code: String, dir: Int) = dirNames.getOrPut(code) { db.directionNames(code, v) }[dir] ?: ""
-        fun colorOf(code: String, dir: Int): Int {
-            val (m, fb) = colors.getOrPut(code) { db.shapeColors(code, v) to db.routeColor(code, v) }
-            return m[dir] ?: fb
+    private fun runEngine(engine: Engine, d: RaptorData, access: List<IntArray>, egress: Map<Int, Int>, departMin: Int) =
+        when (engine) {
+            Engine.RAPTOR -> Raptor.query(d, access, egress, departMin)
+            Engine.CSA -> Csa.query(d, access, egress, departMin)
+            Engine.MCRAPTOR -> McRaptor.query(d, access, egress, departMin)
         }
 
-        val out = ArrayList<Itinerary>()
-        for (j in journeys) if (j.segs.isNotEmpty())
-            out.add(toItinerary(d, j, from, to, byNum, date, departMin, ::towards, ::colorOf))
-        // a direct walk, when it is short enough
-        val wd = dist(from.x, from.y, to.x, to.y)
-        if (wd <= DIRECT_WALK_M) out.add(walkItinerary(from, to, departMin, date, wd))
-
-        return out.distinctBy { sig(it) }
-            .sortedWith(compareBy({ it.arriveMinutes }, { it.transfers }))
-            .take(8)
+    fun plan(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime,
+             engine: Engine = Engine.RAPTOR): List<Itinerary> {
+        val ctx = prepare(db, allStops, from, to, departAt) ?: return directOnly(from, to, departAt)
+        return finalize(ctx, runEngine(engine, ctx.d, ctx.access, ctx.egress, ctx.departMin), from, to)
     }
 
-    private fun directOnly(from: Place, to: Place, departMin: Int, date: java.time.LocalDate): List<Itinerary> {
+    /** Run all three engines, timing each; itineraries are converted identically. */
+    fun compare(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime): List<EngineResult> {
+        val ctx = prepare(db, allStops, from, to, departAt) ?: return Engine.values().map {
+            EngineResult(it, 0.0, directOnly(from, to, departAt))
+        }
+        return Engine.values().map { e ->
+            val t0 = System.nanoTime()
+            val journeys = runEngine(e, ctx.d, ctx.access, ctx.egress, ctx.departMin)
+            val ms = (System.nanoTime() - t0) / 1_000_000.0
+            EngineResult(e, ms, finalize(ctx, journeys, from, to))
+        }
+    }
+
+    private class Ctx(val d: RaptorData, val db: MptDb, val v: Int, val access: List<IntArray>,
+                      val egress: Map<Int, Int>, val departMin: Int, val date: java.time.LocalDate,
+                      val byNum: Map<Int, Stop>)
+
+    private fun prepare(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime): Ctx? {
+        val date = departAt.toLocalDate()
+        val v = db.versionFor(date); val bit = Malta.weekdayBit(date)
+        val departMin = departAt.hour * 60 + departAt.minute
+        val d = data(db, allStops, v, bit)
+        val access = near(d, from); val egress = near(d, to).associate { it[0] to it[1] }
+        if (access.isEmpty() || egress.isEmpty()) return null
+        return Ctx(d, db, v, access, egress, departMin, date, allStops.associateBy { it.number })
+    }
+
+    private fun finalize(ctx: Ctx, journeys: List<RJourney>, from: Place, to: Place): List<Itinerary> {
+        val dirNames = HashMap<String, Map<Int, String>>()
+        val colors = HashMap<String, Pair<Map<Int, Int>, Int>>()
+        fun towards(code: String, dir: Int) = dirNames.getOrPut(code) { ctx.db.directionNames(code, ctx.v) }[dir] ?: ""
+        fun colorOf(code: String, dir: Int): Int {
+            val (m, fb) = colors.getOrPut(code) { ctx.db.shapeColors(code, ctx.v) to ctx.db.routeColor(code, ctx.v) }
+            return m[dir] ?: fb
+        }
+        val out = ArrayList<Itinerary>()
+        for (j in journeys) if (j.segs.isNotEmpty())
+            out.add(toItinerary(ctx.d, j, from, to, ctx.byNum, ctx.date, ctx.departMin, ::towards, ::colorOf))
         val wd = dist(from.x, from.y, to.x, to.y)
-        return if (wd <= DIRECT_WALK_M * 2) listOf(walkItinerary(from, to, departMin, date, wd)) else emptyList()
+        if (wd <= DIRECT_WALK_M) out.add(walkItinerary(from, to, ctx.departMin, ctx.date, wd))
+        return out.distinctBy { sig(it) }.sortedWith(compareBy({ it.arriveMinutes }, { it.transfers })).take(8)
+    }
+
+    private fun directOnly(from: Place, to: Place, departAt: LocalDateTime): List<Itinerary> {
+        val wd = dist(from.x, from.y, to.x, to.y)
+        return if (wd <= DIRECT_WALK_M * 2) listOf(walkItinerary(from, to, departAt.hour * 60 + departAt.minute, departAt.toLocalDate(), wd)) else emptyList()
     }
 
     private fun walkItinerary(from: Place, to: Place, departMin: Int, date: java.time.LocalDate, meters: Double): Itinerary {
@@ -96,10 +125,9 @@ object Planner {
         towards: (String, Int) -> String, colorOf: (String, Int) -> Int,
     ): Itinerary {
         val legs = ArrayList<Leg>()
-        fun coord(stopIdx: Int): DoubleArray = doubleArrayOf(d.lat[stopIdx], d.lon[stopIdx])
+        fun coord(stopIdx: Int) = doubleArrayOf(d.lat[stopIdx], d.lon[stopIdx])
         fun name(num: Int) = byNum[num]?.display ?: "Stop #$num"
 
-        // access walk origin -> first stop
         val accC = coord(j.accessStop)
         legs.add(WalkLeg(from.name, name(d.stopNums[j.accessStop]),
             dist(from.x, from.y, Geo.x(accC[1]), Geo.y(accC[0])).roundToInt(), j.accessSec,
@@ -109,8 +137,8 @@ object Planner {
         for (seg in j.segs) when (seg) {
             is SRide -> {
                 val (code, dir) = d.routeMeta[seg.route]
-                val bIdx = d.routeStops[seg.route][seg.boardPos]; val aIdx = d.routeStops[seg.route][seg.alightPos]
-                val bNum = d.stopNums[bIdx]; val aNum = d.stopNums[aIdx]
+                val bNum = d.stopNums[d.routeStops[seg.route][seg.boardPos]]
+                val aNum = d.stopNums[d.routeStops[seg.route][seg.alightPos]]
                 val bMin = d.routeTripsMin[seg.route][seg.trip][seg.boardPos]
                 val aMin = d.routeTripsMin[seg.route][seg.trip][seg.alightPos]
                 if (firstBoardMin < 0) firstBoardMin = bMin
@@ -125,7 +153,6 @@ object Planner {
                     f[0], f[1], t[0], t[1]))
             }
         }
-        // egress walk last stop -> destination
         val egC = coord(j.egressStop)
         legs.add(WalkLeg(name(d.stopNums[j.egressStop]), to.name,
             dist(Geo.x(egC[1]), Geo.y(egC[0]), to.x, to.y).roundToInt(), j.egressSec,

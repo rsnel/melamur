@@ -337,8 +337,11 @@ class MainActivity : Activity(), LocationListener {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
         val fromBtn = menuButton(); val toBtn = menuButton(); val timeBtn = menuButton(); val searchBtn = Button(this)
         searchBtn.text = getString(R.string.planner_search)
+        val stats = TextView(this).apply {
+            setTextColor(grey); textSize = 11f; typeface = android.graphics.Typeface.MONOSPACE; setPadding(0, 8, 0, 8)
+        }
         val list = ListView(this)
-        box.addView(fromBtn); box.addView(toBtn); box.addView(timeBtn); box.addView(searchBtn); box.addView(list)
+        box.addView(fromBtn); box.addView(toBtn); box.addView(timeBtn); box.addView(searchBtn); box.addView(stats); box.addView(list)
 
         fun refreshLabels() {
             fromBtn.text = getString(R.string.planner_from, from?.name ?: getString(R.string.planner_choose_from))
@@ -369,13 +372,15 @@ class MainActivity : Activity(), LocationListener {
             if (f == null || t == null) { toast(getString(R.string.planner_need)); return@setOnClickListener }
             val db = DbManager.db ?: return@setOnClickListener
             val depart = departWhen ?: LocalDateTime.now(Malta.ZONE)
-            searchBtn.isEnabled = false
+            searchBtn.isEnabled = false; stats.text = "…"
             Thread {
-                val res = runCatching { Planner.plan(db, allStops, f, t, depart) }.getOrDefault(emptyList())
+                val cmp = runCatching { Planner.compare(db, allStops, f, t, depart) }.getOrDefault(emptyList())
                 runOnUiThread {
                     searchBtn.isEnabled = true
-                    adapter.clear(); adapter.addAll(res); adapter.notifyDataSetChanged()
-                    if (res.isEmpty()) toast(getString(R.string.planner_none))
+                    stats.text = statsText(cmp)
+                    val main = cmp.firstOrNull { it.engine == Engine.RAPTOR }?.itineraries ?: emptyList()
+                    adapter.clear(); adapter.addAll(main); adapter.notifyDataSetChanged()
+                    if (main.isEmpty()) toast(getString(R.string.planner_none))
                 }
             }.start()
         }
@@ -391,6 +396,17 @@ class MainActivity : Activity(), LocationListener {
             .setPositiveButton(R.string.navigate) { _, _ -> startNavigation(itin, simulate = false) }
             .setNeutralButton(R.string.simulate) { _, _ -> startNavigation(itin, simulate = true) }
             .setNegativeButton(R.string.close, null).show()
+    }
+
+    private fun statsText(cmp: List<EngineResult>): String {
+        if (cmp.isEmpty()) return ""
+        val lines = cmp.joinToString("\n") { r ->
+            val best = r.bestArrive?.let { Malta.hhmm(it) } ?: "—"
+            val name = when (r.engine) { Engine.RAPTOR -> "RAPTOR"; Engine.CSA -> "CSA"; Engine.MCRAPTOR -> "McRAPTOR" }
+            "%-9s%6.1f ms · %d opt · →%s".format(name, r.millis, r.itineraries.size, best)
+        }
+        val arrivals = cmp.mapNotNull { it.bestArrive }.toSet()
+        return lines + "\n" + if (arrivals.size <= 1) "✓ all agree on earliest arrival" else "✗ engines differ"
     }
 
     private fun summary(it: Itinerary): String = it.legs.joinToString("  ›  ") { leg ->
