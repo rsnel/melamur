@@ -8,6 +8,7 @@
         android:layout_width="match_parent" android:layout_height="wrap_content"
         android:orientation="vertical" android:padding="8dp">
 
+        <!-- Explore: one search bar. Navigate: separate start/destination inputs. -->
         <EditText
             android:id="@+id/searchBar"
             android:layout_width="match_parent" android:layout_height="46dp"
@@ -15,6 +16,22 @@
             android:imeOptions="actionSearch" android:inputType="text" android:maxLines="1"
             android:paddingHorizontal="14dp" android:textColor="@color/mm_white"
             android:textColorHint="@color/mm_grey" android:textSize="16sp" />
+
+        <LinearLayout android:id="@+id/navInputs"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="vertical" android:visibility="gone">
+            <EditText android:id="@+id/startInput"
+                android:layout_width="match_parent" android:layout_height="46dp"
+                android:background="@drawable/panel_bg" android:hint="@string/planner_choose_from"
+                android:inputType="text" android:maxLines="1" android:paddingHorizontal="14dp"
+                android:textColor="@color/mm_white" android:textColorHint="@color/mm_grey" android:textSize="16sp" />
+            <EditText android:id="@+id/endInput"
+                android:layout_width="match_parent" android:layout_height="46dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/panel_bg" android:hint="@string/planner_choose_to"
+                android:inputType="text" android:maxLines="1" android:paddingHorizontal="14dp"
+                android:textColor="@color/mm_white" android:textColorHint="@color/mm_grey" android:textSize="16sp" />
+        </LinearLayout>
 
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="6dp" android:orientation="horizontal">

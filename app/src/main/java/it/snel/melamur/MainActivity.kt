@@ -59,6 +59,12 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var searchBar: EditText
     private lateinit var searchResults: ListView
     private lateinit var searchAdapter: ArrayAdapter<SearchResult>
+    private lateinit var startInput: EditText
+    private lateinit var endInput: EditText
+    private lateinit var navInputs: View
+    private enum class SearchTarget { MAP, START, END }
+    private var searchTarget = SearchTarget.MAP
+    private var suppressSearch = false
 
     // planner selections
     private var from: Place? = null
@@ -102,7 +108,9 @@ class MainActivity : Activity(), LocationListener {
             if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
         }
         searchBar = findViewById(R.id.searchBar); searchResults = findViewById(R.id.searchResults)
-        setupSearchBar()
+        startInput = findViewById(R.id.startInput); endInput = findViewById(R.id.endInput)
+        navInputs = findViewById(R.id.navInputs)
+        setupSearchInputs()
         tabExplore = findViewById(R.id.tabExplore); tabNavigate = findViewById(R.id.tabNavigate)
         tabMap = findViewById(R.id.tabMap); tabText = findViewById(R.id.tabText)
         textPanel = findViewById(R.id.textPanel); textContent = findViewById(R.id.textContent)
@@ -136,7 +144,7 @@ class MainActivity : Activity(), LocationListener {
     }
 
     // ---------------- modes (Explore/Navigate) × views (Map/Text)
-    private fun setMode(m: Mode) { mode = m; updateMapForMode(); refreshView() }
+    private fun setMode(m: Mode) { mode = m; hideSearch(); updateMapForMode(); refreshView() }
     private fun setView(v: ViewKind) { viewKind = v; hideSearch(); refreshView() }
 
     private fun refreshTabs() {
@@ -146,6 +154,32 @@ class MainActivity : Activity(), LocationListener {
         tabText.backgroundTintList = ColorStateList.valueOf(if (viewKind == ViewKind.TEXT) tabOn else tabOff)
         planFab.visibility = if (mode == Mode.NAVIGATE && viewKind == ViewKind.MAP && !NavHub.snapshot.active)
             View.VISIBLE else View.GONE
+        // Explore uses the single search bar; Navigate uses separate start/destination inputs.
+        if (::navInputs.isInitialized) {
+            val nav = mode == Mode.NAVIGATE
+            searchBar.visibility = if (nav) View.GONE else View.VISIBLE
+            navInputs.visibility = if (nav) View.VISIBLE else View.GONE
+            if (nav) syncNavInputs()
+        }
+    }
+
+    /** Reflect the current from/to selection in the navigate inputs without re-triggering search. */
+    private fun syncNavInputs() {
+        if (!::startInput.isInitialized) return
+        suppressSearch = true
+        startInput.setText(from?.name ?: "")
+        endInput.setText(to?.name ?: "")
+        suppressSearch = false
+    }
+
+    private fun setFrom(p: Place?) {
+        from = p
+        if (::startInput.isInitialized) { suppressSearch = true; startInput.setText(p?.name ?: ""); suppressSearch = false }
+    }
+
+    private fun setTo(p: Place?) {
+        to = p
+        if (::endInput.isInitialized) { suppressSearch = true; endInput.setText(p?.name ?: ""); suppressSearch = false }
     }
 
     private fun refreshView() {
@@ -369,13 +403,15 @@ class MainActivity : Activity(), LocationListener {
                     }
                 }
                 list.adapter = adapter
-                val dlg = AlertDialog.Builder(this)
+                val b = AlertDialog.Builder(this)
                     .setTitle(stop.display + "  ·  #${stop.number}")
                     .setView(box)
-                    .setPositiveButton(R.string.from_here) { _, _ -> from = Place(stop.display, stop.lat, stop.lon); toast("Start: ${stop.display}") }
-                    .setNeutralButton(R.string.to_here) { _, _ -> to = Place(stop.display, stop.lat, stop.lon); toast("Destination: ${stop.display}") }
                     .setNegativeButton(R.string.close, null)
-                    .create()
+                if (mode == Mode.NAVIGATE) {
+                    b.setPositiveButton(R.string.from_here) { _, _ -> setFrom(Place(stop.display, stop.lat, stop.lon)); toast("Start: ${stop.display}") }
+                    b.setNeutralButton(R.string.to_here) { _, _ -> setTo(Place(stop.display, stop.lat, stop.lon)); toast("Destination: ${stop.display}") }
+                }
+                val dlg = b.create()
                 list.setOnItemClickListener { _, _, p, _ -> adapter.getItem(p)?.let { selectLine(it.routeCode) }; dlg.dismiss() }
                 if (board.isEmpty()) { header.append("\n\nNo more departures today."); }
                 dlg.show()
@@ -399,27 +435,28 @@ class MainActivity : Activity(), LocationListener {
 
     // ---------------- long-press POI menu
     private fun showLongPressMenu(lat: Double, lon: Double, poi: Poi?) {
+        // Setting start/destination from the map is only offered in Navigate mode.
+        val nav = mode == Mode.NAVIGATE
+        val labels = ArrayList<String>(); val acts = ArrayList<() -> Unit>()
         if (poi == null) {
-            val items = arrayOf(getString(R.string.poi_store), getString(R.string.set_from), getString(R.string.set_to))
-            AlertDialog.Builder(this).setItems(items) { _, w ->
-                when (w) {
-                    0 -> storePoi(lat, lon)
-                    1 -> { from = Place("Dropped pin", lat, lon); toast("Start set") }
-                    2 -> { to = Place("Dropped pin", lat, lon); toast("Destination set") }
-                }
-            }.show()
+            labels.add(getString(R.string.poi_store)); acts.add { storePoi(lat, lon) }
+            if (nav) {
+                labels.add(getString(R.string.set_from)); acts.add { setFrom(Place("Dropped pin", lat, lon)); toast("Start set") }
+                labels.add(getString(R.string.set_to)); acts.add { setTo(Place("Dropped pin", lat, lon)); toast("Destination set") }
+            }
+            AlertDialog.Builder(this).setItems(labels.toTypedArray()) { _, w -> acts[w]() }.show()
         } else {
-            val items = arrayOf(getString(R.string.set_from), getString(R.string.set_to), getString(R.string.poi_delete))
-            AlertDialog.Builder(this).setTitle(poi.name).setItems(items) { _, w ->
-                when (w) {
-                    0 -> { from = Place(poi.name, poi.lat, poi.lon); toast("Start: ${poi.name}") }
-                    1 -> { to = Place(poi.name, poi.lat, poi.lon); toast("Destination: ${poi.name}") }
-                    2 -> AlertDialog.Builder(this).setMessage(R.string.poi_delete_confirm)
-                        .setPositiveButton(R.string.poi_delete) { _, _ ->
-                            PoiStore.remove(this, poi.id); pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
-                        }.setNegativeButton(R.string.close, null).show()
-                }
-            }.show()
+            if (nav) {
+                labels.add(getString(R.string.set_from)); acts.add { setFrom(Place(poi.name, poi.lat, poi.lon)); toast("Start: ${poi.name}") }
+                labels.add(getString(R.string.set_to)); acts.add { setTo(Place(poi.name, poi.lat, poi.lon)); toast("Destination: ${poi.name}") }
+            }
+            labels.add(getString(R.string.poi_delete)); acts.add {
+                AlertDialog.Builder(this).setMessage(R.string.poi_delete_confirm)
+                    .setPositiveButton(R.string.poi_delete) { _, _ ->
+                        PoiStore.remove(this, poi.id); pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
+                    }.setNegativeButton(R.string.close, null).show()
+            }
+            AlertDialog.Builder(this).setTitle(poi.name).setItems(labels.toTypedArray()) { _, w -> acts[w]() }.show()
         }
     }
 
@@ -497,16 +534,35 @@ class MainActivity : Activity(), LocationListener {
         })
     }
 
-    // ---------------- top search bar
-    private fun setupSearchBar() {
+    // ---------------- top search inputs (Explore: one bar; Navigate: start + destination)
+    private fun setupSearchInputs() {
         searchAdapter = searchResultAdapter()
         searchResults.adapter = searchAdapter
+        attachSearch(searchBar, SearchTarget.MAP)
+        attachSearch(startInput, SearchTarget.START)
+        attachSearch(endInput, SearchTarget.END)
+        searchResults.setOnItemClickListener { _, _, p, _ ->
+            val r = searchAdapter.getItem(p)
+            if (r != null) when (searchTarget) {
+                SearchTarget.MAP -> { handleMapPick(r); searchBar.setText("") }
+                SearchTarget.START -> setFrom(r.asPlace())
+                SearchTarget.END -> setTo(r.asPlace())
+            }
+            hideSearch(); hideKeyboard()
+        }
+    }
+
+    /** Wire a debounced search on [input]; results are shared, [target] records which field is active. */
+    private fun attachSearch(input: EditText, target: SearchTarget) {
         val handler = android.os.Handler(mainLooper); var pending: Runnable? = null
-        searchBar.addTextChangedListener(object : android.text.TextWatcher {
+        input.setOnFocusChangeListener { _, has -> if (has) searchTarget = target }
+        input.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) {
+                if (suppressSearch) return
+                searchTarget = target
                 pending?.let { handler.removeCallbacks(it) }
                 val run = Runnable {
-                    val q = searchBar.text.toString()
+                    val q = input.text.toString()
                     val r = if (q.isBlank()) emptyList() else (searchIndex?.search(q) ?: emptyList())
                     searchAdapter.clear(); searchAdapter.addAll(r); searchAdapter.notifyDataSetChanged()
                     searchResults.visibility = if (r.isEmpty()) View.GONE else View.VISIBLE
@@ -516,10 +572,6 @@ class MainActivity : Activity(), LocationListener {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
-        searchResults.setOnItemClickListener { _, _, p, _ ->
-            searchAdapter.getItem(p)?.let { handleMapPick(it) }
-            searchBar.setText(""); hideSearch(); hideKeyboard()
-        }
     }
 
     private fun searchResultAdapter() = object : ArrayAdapter<SearchResult>(
@@ -535,8 +587,9 @@ class MainActivity : Activity(), LocationListener {
 
     private fun hideSearch() { searchResults.visibility = View.GONE }
     private fun hideKeyboard() {
+        val tok = (currentFocus ?: searchBar).windowToken
         (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
-            .hideSoftInputFromWindow(searchBar.windowToken, 0)
+            .hideSoftInputFromWindow(tok, 0)
     }
 
     private fun reloadMenu() {
@@ -573,8 +626,8 @@ class MainActivity : Activity(), LocationListener {
             timeBtn.text = getString(R.string.planner_time, departWhen?.format(fmt) ?: getString(R.string.planner_now))
         }
         refreshLabels()
-        fromBtn.setOnClickListener { showSearch { from = it.asPlace(); refreshLabels() } }
-        toBtn.setOnClickListener { showSearch { to = it.asPlace(); refreshLabels() } }
+        fromBtn.setOnClickListener { showSearch { setFrom(it.asPlace()); refreshLabels() } }
+        toBtn.setOnClickListener { showSearch { setTo(it.asPlace()); refreshLabels() } }
         timeBtn.setOnClickListener { pickDateTime { departWhen = it; refreshLabels() } }
 
         val adapter = object : ArrayAdapter<Itinerary>(this, android.R.layout.simple_list_item_1, ArrayList()) {
