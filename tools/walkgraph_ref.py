@@ -81,18 +81,42 @@ def components(adj):
     return len(c), (max(c.values()) if c else 0)
 
 
-def grid_index(coord, cell=60.0):
+MIN_COMPONENT = 100   # as WalkGraph.MIN_COMPONENT: tiny fragments are never snapped to
+SNAP = 150.0          # as WalkGraph.route(snap = 150f)
+MAX_DETOUR, DETOUR_SLACK = 4.0, 500.0   # as WalkGraph: longer routes fall back to the direct line
+
+
+def component_sizes(adj):
+    parent = list(range(len(adj)))
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]; x = parent[x]
+        return x
+    for u, nbrs in enumerate(adj):
+        for v, _ in nbrs:
+            ru, rv = find(u), find(v)
+            if ru != rv:
+                parent[ru] = rv
+    root = [find(i) for i in range(len(adj))]
+    size = Counter(root)
+    return [size[r] for r in root]
+
+
+def grid_index(coord, comp_size=None, cell=60.0):
     g = {}
     for i, (x, y) in enumerate(coord):
+        if comp_size is not None and comp_size[i] < MIN_COMPONENT:
+            continue
         g.setdefault((int(x // cell), int(y // cell)), []).append(i)
     return g, cell
 
 
-def nearest(coord, g, cell, px, py, radius=80.0):
+def nearest(coord, g, cell, px, py, radius=SNAP):
     cx, cy = int(px // cell), int(py // cell)
     best, bd = -1, radius
-    for dx in (-1, 0, 1):
-        for dy in (-1, 0, 1):
+    r = int(math.ceil(radius / cell))
+    for dx in range(-r, r + 1):
+        for dy in range(-r, r + 1):
             for i in g.get((cx + dx, cy + dy), ()):
                 d = math.hypot(coord[i][0] - px, coord[i][1] - py)
                 if d < bd:
@@ -134,10 +158,13 @@ def main():
 
     stops = json.load(open(STOPS))
     pxy = [(gx(s["lon"]), gy(s["lat"]), s["name"]) for s in stops]
+    sizes = component_sizes(adj)
+    tiny = sum(1 for s in sizes if s < MIN_COMPONENT)
+    print("nodes in fragments < %d (never snapped to): %d (%.1f%%)" % (MIN_COMPONENT, tiny, 100.0 * tiny / max(nodes, 1)))
     import random
     random.seed(1)
     probes = []
-    for a in random.sample(pxy, 60):
+    for a in random.sample(pxy, 400):
         best, bd = None, 1e9
         for cc in pxy:
             if cc is a:
@@ -148,8 +175,8 @@ def main():
         if best and bd < 1500:
             probes.append((a, best, bd))
 
-    g, cell = grid_index(coord)
-    ok = 0; ratios = []
+    g, cell = grid_index(coord, sizes)
+    ok = 0; ratios = []; fallback = 0
     for a, cc, euc in probes:
         na, da = nearest(coord, g, cell, a[0], a[1])
         nc, dc = nearest(coord, g, cell, cc[0], cc[1])
@@ -158,12 +185,18 @@ def main():
         net = astar(adj, coord, na, nc)
         if net is None:
             continue
-        ok += 1; ratios.append((net + da + dc) / max(euc, 1))
+        walk = net + da + dc
+        if walk > max(MAX_DETOUR * euc, euc + DETOUR_SLACK):
+            fallback += 1   # app draws the direct line (likely a crossing missing in OSM)
+            continue
+        ok += 1; ratios.append(walk / max(euc, 1))
+    print("implausible detours -> direct-line fallback: %d" % fallback)
     if ratios:
         ratios.sort()
-        print("routed %d/%d near-pairs | net/euc min=%.2f med=%.2f avg=%.2f max=%.2f"
+        print("routed %d/%d near-pairs | net/euc min=%.2f med=%.2f p90=%.2f max=%.2f"
               % (ok, len(probes), ratios[0], ratios[len(ratios) // 2],
-                 sum(ratios) / len(ratios), ratios[-1]))
+                 ratios[int(len(ratios) * 0.9)], ratios[-1]))
+        print("expect: Malta and Gozo as the two big components, ~99% routed (rest fall back), median ~1.3")
     else:
         print("routed 0 pairs")
     return 0

@@ -25,11 +25,29 @@ class WalkGraph private constructor(
 ) {
     val nodeCount get() = xs.size
 
-    // coarse grid for snapping query points to the nearest graph node
+    // coarse grid for snapping query points to the nearest graph node. Only
+    // nodes in components of >= MIN_COMPONENT nodes are indexed: OSM has many
+    // tiny unconnected fragments (isolated footpaths, private service roads),
+    // and snapping onto one would dead-end the route.
     private val cell = 60f
     private val grid = HashMap<Long, MutableList<Int>>()
     init {
-        for (i in xs.indices) grid.getOrPut(cellKey(xs[i], ys[i])) { ArrayList() }.add(i)
+        val n = xs.size
+        val comp = IntArray(n) { -1 }; val sizes = ArrayList<Int>()
+        val stack = IntArray(n)
+        for (s in 0 until n) {
+            if (comp[s] >= 0) continue
+            val id = sizes.size; var sp = 0; var cnt = 0
+            stack[sp++] = s; comp[s] = id
+            while (sp > 0) {
+                val u = stack[--sp]; cnt++
+                var e = head[u]
+                while (e < head[u + 1]) { val v = nbr[e]; if (comp[v] < 0) { comp[v] = id; stack[sp++] = v }; e++ }
+            }
+            sizes.add(cnt)
+        }
+        for (i in 0 until n) if (sizes[comp[i]] >= MIN_COMPONENT)
+            grid.getOrPut(cellKey(xs[i], ys[i])) { ArrayList() }.add(i)
     }
     private fun cellKey(x: Float, y: Float): Long =
         (Math.floorDiv(x.toInt(), cell.toInt()).toLong() + 100000L) * 300000L +
@@ -38,8 +56,9 @@ class WalkGraph private constructor(
     private fun nearest(px: Float, py: Float, radius: Float): Int {
         val cx = Math.floorDiv(px.toInt(), cell.toInt())
         val cy = Math.floorDiv(py.toInt(), cell.toInt())
+        val r = Math.ceil((radius / cell).toDouble()).toInt()   // cells to search each way
         var best = -1; var bd = radius
-        for (dx in -1..1) for (dy in -1..1) {
+        for (dx in -r..r) for (dy in -r..r) {
             grid[(cx + dx + 100000L) * 300000L + (cy + dy + 100000L)]?.forEach { i ->
                 val d = hypot(xs[i] - px, ys[i] - py)
                 if (d < bd) { bd = d; best = i }
@@ -94,6 +113,11 @@ class WalkGraph private constructor(
         pts[k++] = tx; pts[k++] = ty
         val meters = (dist[t] ?: 0f) +
             hypot(xs[s] - fx, ys[s] - fy) + hypot(xs[t] - tx, ys[t] - ty)
+        // An implausibly long detour almost always means a crossing missing from
+        // OSM (e.g. both sides of a dual carriageway); the planner assumed the
+        // direct walk, so let the caller fall back to it rather than mislead.
+        val direct = hypot(tx - fx, ty - fy)
+        if (meters > maxOf(MAX_DETOUR * direct, direct + DETOUR_SLACK)) return null
         return Path(pts, meters)
     }
 
@@ -101,6 +125,12 @@ class WalkGraph private constructor(
         Path(floatArrayOf(fx, fy, tx, ty), hypot(tx - fx, ty - fy))
 
     companion object {
+        /** Components smaller than this (isolated fragments) are never snapped to. */
+        const val MIN_COMPONENT = 100
+        /** A route longer than both MAX_DETOUR x direct and direct + DETOUR_SLACK m is rejected. */
+        const val MAX_DETOUR = 4f
+        const val DETOUR_SLACK = 500f
+
         /** Load and node walk.bin; null if the asset is absent or unreadable. */
         fun load(ctx: Context): WalkGraph? {
             val bytes = try { ctx.assets.open("walk.bin").use { it.readBytes() } } catch (e: Exception) { return null }
@@ -113,13 +143,16 @@ class WalkGraph private constructor(
             bb.double; bb.double
             val nWays = bb.int
 
-            val nodeOf = HashMap<Long, Int>()
-            val xsL = ArrayList<Float>(); val ysL = ArrayList<Float>()
-            val ea = ArrayList<Int>(); val eb = ArrayList<Int>(); val ew = ArrayList<Float>()
+            // primitive arrays sized by an upper bound (every 4 bytes is at most one
+            // vertex), so loading ~200k nodes does not box hundreds of thousands of values
+            val maxPts = bytes.size / 4 + 1
+            val nodeOf = HashMap<Long, Int>(maxPts)
+            val xsA = FloatArray(maxPts); val ysA = FloatArray(maxPts); var n = 0
+            val ea = IntArray(maxPts); val eb = IntArray(maxPts); val ew = FloatArray(maxPts); var ne = 0
             fun node(x: Int, y: Int): Int {
                 val key = ((x + 40000).toLong() shl 20) or (y + 40000).toLong()
                 nodeOf[key]?.let { return it }
-                val id = xsL.size; nodeOf[key] = id; xsL.add(x.toFloat()); ysL.add(y.toFloat()); return id
+                val id = n++; nodeOf[key] = id; xsA[id] = x.toFloat(); ysA[id] = y.toFloat(); return id
             }
             repeat(nWays) {
                 val np = bb.short.toInt() and 0xffff
@@ -127,27 +160,25 @@ class WalkGraph private constructor(
                 for (i in 0 until np) {
                     val cur = node(bb.short.toInt(), bb.short.toInt())
                     if (prev >= 0 && prev != cur) {
-                        ea.add(prev); eb.add(cur)
-                        ew.add(hypot(xsL[cur] - xsL[prev], ysL[cur] - ysL[prev]))
+                        ea[ne] = prev; eb[ne] = cur
+                        ew[ne] = hypot(xsA[cur] - xsA[prev], ysA[cur] - ysA[prev]); ne++
                     }
                     prev = cur
                 }
             }
 
-            val n = xsL.size
             val deg = IntArray(n)
-            for (i in ea.indices) { deg[ea[i]]++; deg[eb[i]]++ }
+            for (i in 0 until ne) { deg[ea[i]]++; deg[eb[i]]++ }
             val head = IntArray(n + 1)
             for (i in 0 until n) head[i + 1] = head[i] + deg[i]
-            val m = ea.size * 2
-            val nbr = IntArray(m); val w = FloatArray(m)
+            val nbr = IntArray(ne * 2); val w = FloatArray(ne * 2)
             val pos = head.copyOf()
-            for (i in ea.indices) {
+            for (i in 0 until ne) {
                 val u = ea[i]; val v = eb[i]; val ww = ew[i]
                 nbr[pos[u]] = v; w[pos[u]] = ww; pos[u]++
                 nbr[pos[v]] = u; w[pos[v]] = ww; pos[v]++
             }
-            return WalkGraph(xsL.toFloatArray(), ysL.toFloatArray(), head, nbr, w)
+            return WalkGraph(xsA.copyOf(n), ysA.copyOf(n), head, nbr, w)
         }
     }
 }
