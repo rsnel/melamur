@@ -158,13 +158,13 @@ class NavigationService : Service(), LocationListener {
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     private fun note(title: String, text: String): Notification = Notification.Builder(this, CH)
         .setSmallIcon(R.drawable.ic_logo).setContentTitle(title).setContentText(text)
-        .setColor(0xFFE10600.toInt()).setOngoing(true).setContentIntent(openApp()).build()
+        .setColor(0xFFEE0000.toInt()).setOngoing(true).setContentIntent(openApp()).build()
     private fun update(title: String, text: String) =
         getSystemService(NotificationManager::class.java).notify(NOTIF, note(title, text))
     @SuppressLint("MissingPermission")
     private fun alert(title: String, text: String) {
         val n = Notification.Builder(this, CH_ALERT).setSmallIcon(R.drawable.ic_logo)
-            .setContentTitle(title).setContentText(text).setColor(0xFFE10600.toInt())
+            .setContentTitle(title).setContentText(text).setColor(0xFFEE0000.toInt())
             .setCategory(Notification.CATEGORY_ALARM).setAutoCancel(true).setContentIntent(openApp()).build()
         runCatching { getSystemService(NotificationManager::class.java).notify(NOTIF_ALERT, n) }
         getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createWaveform(VIBE, -1))

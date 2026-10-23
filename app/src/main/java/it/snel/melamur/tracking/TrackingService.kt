@@ -196,7 +196,7 @@ class TrackingService : Service(), LocationListener {
 
     private fun statusNotification(text: String): Notification = Notification.Builder(this, CH_STATUS)
         .setSmallIcon(R.drawable.ic_logo).setContentTitle(getString(R.string.app_name)).setContentText(text)
-        .setColor(0xFFE10600.toInt()).setOngoing(true).setContentIntent(openApp()).build()
+        .setColor(0xFFEE0000.toInt()).setOngoing(true).setContentIntent(openApp()).build()
 
     private fun notifyStatus(text: String) =
         getSystemService(NotificationManager::class.java).notify(NOTIF_STATUS, statusNotification(text))
@@ -204,7 +204,7 @@ class TrackingService : Service(), LocationListener {
     @Suppress("DEPRECATION")
     private fun alert(title: String, text: String) {
         val n = Notification.Builder(this, CH_ALERT).setSmallIcon(R.drawable.ic_logo)
-            .setContentTitle(title).setContentText(text).setColor(0xFFE10600.toInt())
+            .setContentTitle(title).setContentText(text).setColor(0xFFEE0000.toInt())
             .setCategory(Notification.CATEGORY_ALARM).setAutoCancel(true).setContentIntent(openApp()).build()
         runCatching { getSystemService(NotificationManager::class.java).notify(NOTIF_ALERT, n) }
         getSystemService(Vibrator::class.java)?.vibrate(VibrationEffect.createWaveform(VIBE, -1))

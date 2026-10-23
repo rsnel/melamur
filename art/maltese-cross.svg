@@ -3,5 +3,5 @@
      Master SVG; app/src/main/res/drawable/ic_maltese_cross.xml mirrors it. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100">
   <path fill="#FFFFFF" d="M50,22.40 L50,77.60 L29.30,96 L39.88,60.12 L4,70.70 L22.40,50 L4,29.30 L39.88,39.88 L29.30,4 Z"/>
-  <path fill="#E10600" d="M50,22.40 L70.70,4 L60.12,39.88 L96,29.30 L77.60,50 L96,70.70 L60.12,60.12 L70.70,96 L50,77.60 Z"/>
+  <path fill="#EE0000" d="M50,22.40 L70.70,4 L60.12,39.88 L96,29.30 L77.60,50 L96,70.70 L60.12,60.12 L70.70,96 L50,77.60 Z"/>
 </svg>

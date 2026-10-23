@@ -148,7 +148,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val routePaint = stroke(Color.WHITE)
     private val arrowPaint = fill(Color.WHITE)
     private val stopFill = fill(Color.WHITE)
-    private val stopRing = stroke(Color.rgb(225, 6, 0)).apply { strokeWidth = 2 * dp }
+    private val stopRing = stroke(Color.rgb(238, 0, 0)).apply { strokeWidth = 2 * dp }
     // white text with a strong dark halo for high contrast on the light map
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE; textSize = 12 * dp; isFakeBoldText = true; setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
@@ -169,8 +169,8 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val diamond = Path()
     private val occupied = HashSet<Long>() // label collision grid, rebuilt per frame
     private val meFill = fill(Color.WHITE)
-    private val meRing = stroke(Color.rgb(225, 6, 0)).apply { strokeWidth = 4 * dp }
-    private val meAcc = fill(Color.argb(50, 225, 6, 0))
+    private val meRing = stroke(Color.rgb(238, 0, 0)).apply { strokeWidth = 4 * dp }
+    private val meAcc = fill(Color.argb(50, 238, 0, 0))
     private val matrix = Matrix()
     private val pt = FloatArray(2)
     private val arrow = Path()
@@ -255,10 +255,10 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                     val len = 3.4f * r
                     val tx = pt[0] + len * sin(br).toFloat(); val ty = pt[1] - len * cos(br).toFloat()
                     c.drawLine(pt[0], pt[1], tx, ty, stopRing)
-                    arrowPaint.color = Color.rgb(225, 6, 0)
+                    arrowPaint.color = Color.rgb(238, 0, 0)
                     drawArrow(c, tx, ty, h, (if (hl) 7 else 5) * dp)
                 }
-                stopFill.color = if (s.id == destinationStopId) Color.rgb(225, 6, 0) else Color.WHITE
+                stopFill.color = if (s.id == destinationStopId) Color.rgb(238, 0, 0) else Color.WHITE
                 c.drawCircle(pt[0], pt[1], r, stopFill); c.drawCircle(pt[0], pt[1], r, stopRing)
                 if (showLabels || hl) c.drawText(s.name, pt[0] + r + 3 * dp, pt[1] + 4 * dp, label)
             }
@@ -275,7 +275,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         me?.let { m ->
             pt[0] = m[0]; pt[1] = m[1]; matrix.mapPoints(pt)
             c.drawCircle(pt[0], pt[1], m[2] * scale, meAcc)
-            if (!m[3].isNaN()) { meFill.color = Color.rgb(225, 6, 0); drawArrow(c, pt[0], pt[1], m[3], 16 * dp) }
+            if (!m[3].isNaN()) { meFill.color = Color.rgb(238, 0, 0); drawArrow(c, pt[0], pt[1], m[3], 16 * dp) }
             meFill.color = Color.WHITE
             c.drawCircle(pt[0], pt[1], 8 * dp, meFill); c.drawCircle(pt[0], pt[1], 8 * dp, meRing)
         }

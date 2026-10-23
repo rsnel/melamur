@@ -31,8 +31,9 @@ class SplashActivity : Activity() {
         private val start = System.nanoTime()
         private val dur = 3000L
         private val bus: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_logo, a.theme) }.getOrNull()
+        private val boat: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_boat, a.theme) }.getOrNull()
         private val cross: Drawable? = runCatching { resources.getDrawable(R.drawable.ic_maltese_cross, a.theme) }.getOrNull()
-        private val red = Color.rgb(225, 6, 0)
+        private val red = Color.rgb(238, 0, 0)
         private val mela = textPaint(Color.WHITE)
         private val mur = textPaint(red)
         // "MALTA" in letter-spaced small caps (serif) below the cross
@@ -83,17 +84,20 @@ class SplashActivity : Activity() {
             c.drawText("Mela", x0 + wMela / 2, cyText, mela)
             c.drawText("Mur", x0 + wMela + gap + wMur / 2, cyText, mur)
 
-            // bus: in from right (0-1s), hold, out to left (1.8-3s)
-            val busW = w * 0.34f; val busH = busW * 0.6f
+            // vehicles cross the strip, each driving in from the right and out to
+            // the left (Malta drives on the left): empty -> bus -> boat -> bus
+            val vW = w * 0.34f; val vH = vW * 0.6f
             val yBus = h * 0.52f
-            val enterT = ease((el / 900f).coerceIn(0f, 1f))
-            val exitT = ease(((el - 1800) / 1100f).coerceIn(0f, 1f))
-            val xIn = w + busW; val xMid = (w - busW) / 2; val xOut = -busW * 1.2f
-            val cxBus = if (el < 1800) xIn + (xMid - xIn) * enterT else xMid + (xOut - xMid) * exitT
-            bus?.let {
-                it.setBounds(cxBus.toInt(), yBus.toInt(), (cxBus + busW).toInt(), (yBus + busH).toInt())
-                it.draw(c)
+            fun pass(d: Drawable?, t0: Float, t1: Float) {
+                if (d == null || el < t0 || el > t1) return
+                val p = ease(((el - t0) / (t1 - t0)).coerceIn(0f, 1f))
+                val xStart = w + vW; val xEnd = -vW * 1.3f
+                val x = xStart + (xEnd - xStart) * p
+                d.setBounds(x.toInt(), yBus.toInt(), (x + vW).toInt(), (yBus + vH).toInt()); d.draw(c)
             }
+            pass(bus, 250f, 1150f)
+            pass(boat, 1150f, 2050f)
+            pass(bus, 2050f, 2950f)
 
             c.drawText("Timetables © Malta Public Transport", w / 2, h - 46 * dp, credit)
             c.drawText("Map data © OpenStreetMap contributors", w / 2, h - 28 * dp, credit)
