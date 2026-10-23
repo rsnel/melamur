@@ -90,6 +90,7 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var textPanel: android.widget.ScrollView
     private lateinit var textContent: LinearLayout
     private lateinit var centerBtn: Button
+    private lateinit var zoomBox: View
     private lateinit var tabExplore: Button
     private lateinit var tabNavigate: Button
     private lateinit var tabMap: ImageButton
@@ -116,6 +117,9 @@ class MainActivity : Activity(), LocationListener {
         panel = findViewById(R.id.panel)
         lm = getSystemService(LocationManager::class.java)
 
+        zoomBox = findViewById(R.id.zoomBox)
+        findViewById<Button>(R.id.zoomIn).setOnClickListener { map.zoomBy(2f) }
+        findViewById<Button>(R.id.zoomOut).setOnClickListener { map.zoomBy(0.5f) }
         centerBtn = findViewById(R.id.center)
         centerBtn.setOnClickListener {
             if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
@@ -184,6 +188,7 @@ class MainActivity : Activity(), LocationListener {
         tabText.imageTintList = ColorStateList.valueOf(if (viewKind == ViewKind.TEXT) tabOn else iconOff)
         // center-me lives just above the bottom bar; only useful on the map
         centerBtn.visibility = if (viewKind == ViewKind.MAP) View.VISIBLE else View.GONE
+        zoomBox.visibility = centerBtn.visibility
         refreshNavBar()
     }
 

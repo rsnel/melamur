@@ -21,7 +21,11 @@
     <string name="cd_map">Map view</string>
     <string name="cd_text">Text view</string>
     <string name="cd_menu">Menu</string>
-    <string name="cd_swap">Swap start and destination</string>
+    <string name="cd_swap">Swap from and to</string>
+    <string name="zoom_in">+</string>
+    <string name="zoom_out">−</string>
+    <string name="cd_zoom_in">Zoom in</string>
+    <string name="cd_zoom_out">Zoom out</string>
     <string name="text_all_lines">All lines</string>
     <string name="text_show_map">Show on map</string>
     <string name="text_earlier">‹ earlier</string>

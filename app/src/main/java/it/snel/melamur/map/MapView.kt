@@ -94,6 +94,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         cx = Geo.x(lon); cy = Geo.y(lat); scale = sc; follow = false; invalidate()
     }
 
+    /** Zoom by [f] around the screen centre (keeps follow mode). */
+    fun zoomBy(f: Float) = zoomAt(width / 2f, height / 2f, f)
+
     /** Centre on the user; zoom in to street level if we are zoomed far out. */
     fun centerOnMe(): Boolean {
         val m = me ?: return false
@@ -211,6 +214,14 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val searchFill = fill(Color.rgb(33, 118, 243))
     private val searchRing = stroke(Color.WHITE).apply { strokeWidth = 2.5f * dp }
     private val pin = Path()
+    // scale bar (bottom-left): dark line on a white halo, readable on the light map
+    private val scaleHalo = stroke(Color.WHITE).apply { strokeWidth = 5 * dp; strokeCap = Paint.Cap.SQUARE }
+    private val scaleLine = stroke(Color.rgb(30, 30, 30)).apply { strokeWidth = 2 * dp; strokeCap = Paint.Cap.SQUARE }
+    private val scaleText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(30, 30, 30); textSize = 12 * dp; isFakeBoldText = true
+        setShadowLayer(3 * dp, 0f, 0f, Color.WHITE)
+    }
+    private val scalePath = Path()
     private val occupied = HashSet<Long>() // label collision grid, rebuilt per frame
     private val stopLabelCells = HashSet<String>() // stops whose name won a slot this frame
     private val meFill = fill(Color.WHITE)
@@ -345,6 +356,22 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             meFill.color = Color.WHITE
             c.drawCircle(pt[0], pt[1], 8 * dp, meFill); c.drawCircle(pt[0], pt[1], 8 * dp, meRing)
         }
+        drawScaleBar(c)
+    }
+
+    /** Scale bar: the largest 1/2/5 x 10^n metres that fits in ~110 dp. */
+    private fun drawScaleBar(c: Canvas) {
+        val maxM = 110 * dp / scale
+        val p = Math.pow(10.0, Math.floor(Math.log10(maxM.toDouble())))
+        val m = doubleArrayOf(5 * p, 2 * p, p).first { it <= maxM }
+        val len = (m * scale).toFloat()
+        val x0 = 14 * dp; val y = height - 16 * dp; val tick = 6 * dp
+        scalePath.reset()
+        scalePath.moveTo(x0, y - tick); scalePath.lineTo(x0, y)
+        scalePath.lineTo(x0 + len, y); scalePath.lineTo(x0 + len, y - tick)
+        c.drawPath(scalePath, scaleHalo); c.drawPath(scalePath, scaleLine)
+        val label = if (m >= 1000) "${(m / 1000).toInt()} km" else "${m.toInt()} m"
+        c.drawText(label, x0 + 4 * dp, y - 5 * dp, scaleText)
     }
 
     /** Teardrop pin with a white centre; its tip sits exactly on (x, y). */

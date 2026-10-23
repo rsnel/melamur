@@ -104,6 +104,26 @@
                 android:orientation="vertical" android:padding="14dp" />
         </ScrollView>
 
+        <!-- zoom in / out: top-right; hidden in text mode -->
+        <LinearLayout android:id="@+id/zoomBox"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_gravity="top|end" android:layout_margin="12dp"
+            android:orientation="vertical">
+            <Button android:id="@+id/zoomIn"
+                android:layout_width="44dp" android:layout_height="44dp"
+                android:minWidth="0dp" android:minHeight="0dp" android:padding="0dp"
+                android:background="@drawable/fab_bg" android:text="@string/zoom_in"
+                android:contentDescription="@string/cd_zoom_in"
+                android:textColor="@color/mm_white" android:textSize="24sp" />
+            <Button android:id="@+id/zoomOut"
+                android:layout_width="44dp" android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:minWidth="0dp" android:minHeight="0dp" android:padding="0dp"
+                android:background="@drawable/fab_bg" android:text="@string/zoom_out"
+                android:contentDescription="@string/cd_zoom_out"
+                android:textColor="@color/mm_white" android:textSize="24sp" />
+        </LinearLayout>
+
         <!-- center-me: sits bottom-right, just above the Map/Text/Misc bar; hidden in text mode -->
         <Button android:id="@+id/center"
             android:layout_width="56dp" android:layout_height="56dp"
