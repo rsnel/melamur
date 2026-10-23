@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Path
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -29,6 +30,7 @@ import android.widget.Toast
 import it.snel.melamur.data.*
 import it.snel.melamur.map.Geo
 import it.snel.melamur.map.MapView
+import it.snel.melamur.map.Polyline
 import it.snel.melamur.map.RouteRenderer
 import it.snel.melamur.nav.NavHub
 import it.snel.melamur.nav.NavigationService
@@ -243,7 +245,9 @@ class MainActivity : Activity(), LocationListener {
         refreshTabs(); render()
     }
 
-    private fun clearRoutes() { map.routes = emptyList(); map.activeRouteId = null; map.invalidate() }
+    private fun clearRoutes() {
+        map.routes = emptyList(); map.activeRouteId = null; map.itinPaths = emptyList(); map.invalidate()
+    }
 
     private fun updateMapForMode() {
         when (mode) {
@@ -261,15 +265,42 @@ class MainActivity : Activity(), LocationListener {
     private fun drawItinerary(itin: Itinerary) {
         val db = DbManager.db ?: return
         Thread {
-            val v = db.versionFor(LocalDate.now(Malta.ZONE))
-            val gfx = ArrayList<it.snel.melamur.map.RouteGfx>()
-            for (bl in itin.busLegs) {
-                val ds = db.directionsForRoute(bl.routeCode, v).firstOrNull { it.directionIndex == bl.directionIndex } ?: continue
-                val route = BusRoute(bl.routeCode, bl.routeCode, ds.color,
-                    listOf(RouteDirection(ds.directionIndex.toString(), ds.name, ds.shape, ds.stopNumbers, ds.color)))
-                gfx.add(RouteRenderer.build(route, busStopsById))
+            val v = db.versionFor(itin.serviceDate)
+            val byNum = allStops.associateBy { it.number }
+            val shapeCache = HashMap<String, Polyline?>()
+            fun shapeFor(code: String, dir: Int): Polyline? = shapeCache.getOrPut("$code/$dir") {
+                db.directionsForRoute(code, v).firstOrNull { it.directionIndex == dir }?.shape
             }
-            runOnUiThread { map.routes = gfx; map.activeRouteId = null; map.invalidate() }
+            val paths = ArrayList<MapView.ItinPath>()
+            for (leg in itin.legs) when (leg) {
+                is WalkLeg -> {
+                    val p = Path()
+                    p.moveTo(Geo.x(leg.fromLon), Geo.y(leg.fromLat)); p.lineTo(Geo.x(leg.toLon), Geo.y(leg.toLat))
+                    paths.add(MapView.ItinPath(p, 0, true))
+                }
+                is BusLeg -> {
+                    val p = Path()
+                    val shape = shapeFor(leg.routeCode, leg.directionIndex)
+                    val b = byNum[leg.boardNumber]; val a = byNum[leg.alightNumber]
+                    if (shape != null && b != null && a != null) {
+                        val b0 = shape.project(b.x, b.y)?.along
+                        val a0 = if (b0 != null) shape.project(a.x, a.y, b0)?.along else null
+                        if (b0 != null && a0 != null && a0 > b0) {
+                            var along = b0; var first = true
+                            while (along < a0) {
+                                val q = shape.at(along)
+                                if (first) { p.moveTo(q[0], q[1]); first = false } else p.lineTo(q[0], q[1])
+                                along += 25f
+                            }
+                            val end = shape.at(a0); p.lineTo(end[0], end[1])
+                        }
+                    }
+                    if (p.isEmpty) { b?.let { p.moveTo(it.x, it.y) }; a?.let { p.lineTo(it.x, it.y) } }
+                    paths.add(MapView.ItinPath(p, leg.color, false))
+                }
+                else -> {}
+            }
+            runOnUiThread { map.routes = emptyList(); map.activeRouteId = null; map.itinPaths = paths; map.invalidate() }
         }.start()
     }
 
@@ -338,9 +369,13 @@ class MainActivity : Activity(), LocationListener {
             val stops = trip?.let { db.tripStops(it.tripId) } ?: emptyList()
             val col = dir?.color ?: db.routeColor(code, v)
             val byNum = allStops.associateBy { it.number }
+            val tripIdx = deps.indexOfFirst { it.tripId == trip?.tripId }
+            val nextTrip = if (tripIdx >= 0) deps.getOrNull(tripIdx + 1) else null
+            val gap = if (trip != null && nextTrip != null) nextTrip.minutes - trip.minutes else null
             runOnUiThread {
                 textContent.addView(tv("$code  →  ${dir?.name ?: ""}", col, 18f, true))
-                textContent.addView(tv("Trip departing ${trip?.let { Malta.hhmm(it.minutes) } ?: "—"}", grey, 13f))
+                val headway = gap?.let { "   ·   next bus in $it min" } ?: if (trip != null) "   ·   last trip" else ""
+                textContent.addView(tv("Trip departing ${trip?.let { Malta.hhmm(it.minutes) } ?: "—"}$headway", grey, 13f))
                 for (s in stops) {
                     val nm = s.number?.let { byNum[it]?.display } ?: s.name
                     textContent.addView(tv("${Malta.hhmm(s.minutes)}    $nm", white, 15f))
@@ -493,6 +528,7 @@ class MainActivity : Activity(), LocationListener {
             val rows = firstPer.values.sortedWith(
                 compareBy({ codeKey(it.routeCode) }, { it.routeCode }, { it.directionIndex }))
             runOnUiThread {
+                setView(ViewKind.MAP)   // always show the stop over the map
                 val pad = (12 * resources.displayMetrics.density).toInt()
                 val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
                 var dlg: AlertDialog? = null
@@ -513,6 +549,9 @@ class MainActivity : Activity(), LocationListener {
                     .setNeutralButton(R.string.nav_to) { _, _ -> navFromMap(place, false) }
                     .setNegativeButton(R.string.close, null).create()
                 dlg.show()
+                // navigate-from / navigate-to greyed out for now
+                dlg.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = false
+                dlg.getButton(AlertDialog.BUTTON_NEUTRAL)?.isEnabled = false
             }
         }.start()
     }
@@ -527,7 +566,7 @@ class MainActivity : Activity(), LocationListener {
                 RouteDirection(it.directionIndex.toString(), it.name, it.shape, it.stopNumbers, it.color)
             })
             val gfx = RouteRenderer.build(route, busStopsById)
-            runOnUiThread { map.routes = listOf(gfx); map.activeRouteId = code; map.invalidate() }
+            runOnUiThread { map.itinPaths = emptyList(); map.routes = listOf(gfx); map.activeRouteId = code; map.invalidate() }
         }.start()
     }
 

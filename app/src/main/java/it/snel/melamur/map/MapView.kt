@@ -3,6 +3,7 @@ package it.snel.melamur.map
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
@@ -33,6 +34,10 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     var stops: List<BusStop> = emptyList()
         set(v) { field = v; invalidate() }
     var routes: List<RouteGfx> = emptyList()
+        set(v) { field = v; invalidate() }
+    /** A planned-journey overlay leg: a path in projected (world) coords. */
+    class ItinPath(val path: Path, val color: Int, val walk: Boolean)
+    var itinPaths: List<ItinPath> = emptyList()
         set(v) { field = v; invalidate() }
     class PlaceLabel(val x: Float, val y: Float, val name: String, val rank: Int)
     class StreetLabel(val x: Float, val y: Float, val x2: Float, val y2: Float, val name: String)
@@ -163,6 +168,12 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         Layer(MapData.TRUNK, stroke(Color.rgb(239, 215, 154)), 2f, 11f, 0f),
     )
     private val routePaint = stroke(Color.WHITE)
+    // planned journey overlay: solid for the used bus segment, dotted for walking
+    private val itinBusPaint = stroke(Color.WHITE).apply { strokeWidth = 6 * dp }
+    private val itinWalkPaint = stroke(Color.rgb(60, 60, 60)).apply {
+        strokeWidth = 4 * dp; pathEffect = DashPathEffect(floatArrayOf(2 * dp, 8 * dp), 0f)
+    }
+    private val itinPathScreen = Path()
     private val arrowPaint = fill(Color.WHITE)
     private val stopFill = fill(Color.WHITE)
     private val stopRing = stroke(Color.rgb(238, 0, 0)).apply { strokeWidth = 2 * dp }
@@ -238,6 +249,12 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 if (pt[0] in 0f..width.toFloat() && pt[1] in 0f..height.toFloat()) drawArrow(c, pt[0], pt[1], a[i + 2], 7 * dp)
                 i += 3
             }
+        }
+        // planned-journey overlay (screen space so stroke width and dots stay constant)
+        for (ip in itinPaths) {
+            itinPathScreen.set(ip.path); itinPathScreen.transform(matrix)
+            if (ip.walk) c.drawPath(itinPathScreen, itinWalkPaint)
+            else { itinBusPaint.color = ip.color; c.drawPath(itinPathScreen, itinBusPaint) }
         }
         // ---- text labels (screen space, collision-avoided)
         occupied.clear()
