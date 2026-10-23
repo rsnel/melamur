@@ -5,3 +5,4 @@ local.properties
 .idea/
 app/src/main/assets/client.p12
 server/certs/
+__pycache__/
