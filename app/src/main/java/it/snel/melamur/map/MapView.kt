@@ -51,6 +51,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         set(v) { field = v; invalidate() }
     var streets: List<StreetLabel> = emptyList()
         set(v) { field = v; invalidate() }
+    /** Named points people look for (attractions, hotels, churches, supermarkets, ...). */
+    var landmarks: List<PlaceLabel> = emptyList()
+        set(v) { field = v; invalidate() }
     var pois: List<Poi> = emptyList()
         set(v) { field = v; invalidate() }
     var activeRouteId: String? = null
@@ -440,6 +443,13 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         setShadowLayer(4 * dp, 0f, 0f, Color.BLACK)
     }
     private val placeDot = fill(Color.WHITE)
+    // landmarks: violet dot + violet name on a white halo, distinct from stop/place labels
+    private val landmarkColor = Color.rgb(105, 70, 160)
+    private val landmarkDot = fill(landmarkColor)
+    private val landmarkRing = stroke(Color.WHITE).apply { strokeWidth = 1.2f * dp }
+    private val landmarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = landmarkColor; textSize = 11 * dp; isFakeBoldText = true; setShadowLayer(3 * dp, 0f, 0f, Color.WHITE)
+    }
     private val poiFill = fill(Color.rgb(255, 193, 7))
     private val poiStroke = stroke(Color.WHITE).apply { strokeWidth = 1.5f * dp }
     private val poiLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -541,6 +551,29 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 if (reserve(pt[0] + r + 3 * dp, pt[1] + 4 * dp)) stopLabelCells.add(s.id)
             }
         }
+        // after stop names: towns and villages, then landmarks, then street names
+        for (p in places) {
+            val minS = PLACE_MIN_SCALE[p.rank]
+            if (scale < minS) continue
+            if (p.x < vx0 || p.x > vx1 || p.y < vy0 || p.y > vy1) continue
+            pt[0] = p.x; pt[1] = p.y; matrix.mapPoints(pt)
+            if (pt[0] < 0 || pt[0] > width || pt[1] < 0 || pt[1] > height) continue
+            if (!reserve(pt[0], pt[1])) continue
+            placePaint.textSize = PLACE_TEXT[p.rank] * dp
+            placePaint.isFakeBoldText = p.rank <= 1
+            if (p.rank <= 2) c.drawCircle(pt[0], pt[1], 2.5f * dp, placeDot)
+            c.drawText(p.name, pt[0], pt[1] - 5 * dp, placePaint)
+        }
+        if (scale > LANDMARK_SCALE) {
+            for (p in landmarks) {
+                if (p.x < vx0 || p.x > vx1 || p.y < vy0 || p.y > vy1) continue
+                pt[0] = p.x; pt[1] = p.y; matrix.mapPoints(pt)
+                if (pt[0] < 0 || pt[0] > width || pt[1] < 0 || pt[1] > height) continue
+                if (!reserve(pt[0] + 7 * dp, pt[1])) continue
+                c.drawCircle(pt[0], pt[1], 3.5f * dp, landmarkDot); c.drawCircle(pt[0], pt[1], 3.5f * dp, landmarkRing)
+                c.drawText(p.name, pt[0] + 7 * dp, pt[1] + 4 * dp, landmarkPaint)
+            }
+        }
         if (scale > STREET_LABEL_SCALE) {
             streetPaint.textSize = 11 * dp
             for (s in streets) {
@@ -555,18 +588,6 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 c.save(); c.translate(sx, sy); c.rotate(ang)
                 c.drawText(s.name, 0f, -2 * dp, streetPaint); c.restore()
             }
-        }
-        for (p in places) {
-            val minS = PLACE_MIN_SCALE[p.rank]
-            if (scale < minS) continue
-            if (p.x < vx0 || p.x > vx1 || p.y < vy0 || p.y > vy1) continue
-            pt[0] = p.x; pt[1] = p.y; matrix.mapPoints(pt)
-            if (pt[0] < 0 || pt[0] > width || pt[1] < 0 || pt[1] > height) continue
-            if (!reserve(pt[0], pt[1])) continue
-            placePaint.textSize = PLACE_TEXT[p.rank] * dp
-            placePaint.isFakeBoldText = p.rank <= 1
-            if (p.rank <= 2) c.drawCircle(pt[0], pt[1], 2.5f * dp, placeDot)
-            c.drawText(p.name, pt[0], pt[1] - 5 * dp, placePaint)
         }
 
         if (scale > MIN_STOP_SCALE) {
@@ -680,6 +701,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         // stop names show from this zoom (lowered so they appear earlier); streets a bit later
         private const val STOP_LABEL_SCALE = 1.2f
         private const val STREET_LABEL_SCALE = 2.0f
+        private const val LANDMARK_SCALE = 1.5f
         // indexed by place rank 0..4 (capital/city, town, village/suburb, hamlet, locality)
         private val PLACE_MIN_SCALE = floatArrayOf(0f, 0.02f, 0.12f, 0.5f, 1.5f)
         private val PLACE_TEXT = floatArrayOf(17f, 15f, 13f, 12f, 11f)

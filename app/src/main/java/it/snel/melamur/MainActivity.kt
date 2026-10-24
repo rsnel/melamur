@@ -182,13 +182,13 @@ class MainActivity : Activity(), LocationListener {
         val warm = Preloader.mapData
         if (warm != null) {
             map.data = warm
-            Preloader.labels?.let { places = it.first; streets = it.second; landmarks = it.third }
+            Preloader.labels?.let { applyLabels(it) }
             rebuildIndex()
         } else {
             Thread {
                 val data = Preloader.getMapData(this)
                 val lbl = Preloader.getLabels(this)
-                runOnUiThread { map.data = data; places = lbl.first; streets = lbl.second; landmarks = lbl.third; rebuildIndex() }
+                runOnUiThread { map.data = data; applyLabels(lbl); rebuildIndex() }
             }.start()
         }
 
@@ -640,6 +640,12 @@ class MainActivity : Activity(), LocationListener {
             if (first != null && today < first) toast(getString(R.string.db_future, first))
             render()
         }
+    }
+
+    /** Place, street and landmark names: for search, and drawn on the map. */
+    private fun applyLabels(l: Triple<List<MapView.PlaceLabel>, List<MapView.StreetLabel>, List<MapView.PlaceLabel>>) {
+        places = l.first; streets = l.second; landmarks = l.third
+        map.places = places; map.streets = streets; map.landmarks = landmarks
     }
 
     private fun rebuildIndex() { searchIndex = SearchIndex.build(allStops, places, streets, landmarks, pois) }
