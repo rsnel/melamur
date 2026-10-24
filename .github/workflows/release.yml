@@ -50,8 +50,11 @@ jobs:
           "$BT/apksigner" verify --verbose --print-certs "$APK" | tee "$RUNNER_TEMP/certs.txt"
           # show the certificate fingerprint in keytool's format (AB:CD:...), so it can be
           # compared with: keytool -list -v -keystore melamur-release.jks -alias melamur
-          FP=$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' "$RUNNER_TEMP/certs.txt" | tr a-f A-F | sed 's/../&:/g; s/:$//')
-          DN=$(sed -n 's/^Signer #1 certificate DN: //p' "$RUNNER_TEMP/certs.txt")
+          FP=$(grep -m1 -i 'certificate SHA-256 digest' "$RUNNER_TEMP/certs.txt" | sed 's/.*digest: *//' | tr -d ' ' | tr a-f A-F | sed 's/../&:/g; s/:$//')
+          DN=$(grep -m1 -i 'certificate DN' "$RUNNER_TEMP/certs.txt" | sed 's/.*DN: *//')
+          if [ -z "$FP" ]; then
+            echo "::warning title=apksigner output::$(grep -i -m6 'signer\|certificate' "$RUNNER_TEMP/certs.txt" | tr '\n' '|')"
+          fi
           echo "::notice title=Signing certificate::SHA256 $FP ($DN)"
           printf '### Signing certificate\n\n`%s`\n\nSHA256: `%s`\n' "$DN" "$FP" >> "$GITHUB_STEP_SUMMARY"
           # fixed name, so .../releases/latest/download/melamur.apk is always the newest
