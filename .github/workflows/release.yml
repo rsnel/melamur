@@ -48,16 +48,17 @@ jobs:
           fi
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           "$BT/apksigner" verify --verbose --print-certs "$APK"
-          cp "$APK" "melamur-$GITHUB_REF_NAME.apk"
+          # fixed name, so .../releases/latest/download/melamur.apk is always the newest
+          cp "$APK" melamur.apk
 
       - uses: actions/upload-artifact@v4
-        with: { name: melamur-release-apk, path: 'melamur-*.apk' }
+        with: { name: melamur-release-apk, path: melamur.apk }
 
       - name: Publish GitHub release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "melamur-$GITHUB_REF_NAME.apk" --title "MelaMur $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" melamur.apk --title "MelaMur $GITHUB_REF_NAME" --generate-notes
 
       - name: Remove keystore
         if: always()

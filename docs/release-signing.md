@@ -55,6 +55,7 @@ git push origin v0.2.0
 
 The **Release** workflow builds the APK with version name `0.2.0`, checks the
 signature with `apksigner`, and publishes a GitHub release with
-`melamur-v0.2.0.apk` attached. The version code is the workflow's run number, so
+`melamur.apk` attached. The newest release is always at
+https://github.com/rsnel/melamur/releases/latest/download/melamur.apk. The version code is the workflow's run number, so
 it always increases. Running the workflow by hand ("Run workflow") builds and
 uploads a signed APK as an artifact without publishing a release.

@@ -58,9 +58,10 @@
                 <Button android:id="@+id/timeBtn" style="@style/MmButton"
                     android:layout_width="0dp" android:layout_height="44dp"
                     android:layout_weight="1" android:layout_marginEnd="6dp" />
+                <!-- Plan only as wide as its label, so the time button gets the room -->
                 <Button android:id="@+id/planBtn" style="@style/MmButton"
-                    android:layout_width="0dp" android:layout_height="44dp"
-                    android:layout_weight="1" android:text="@string/plan" />
+                    android:layout_width="wrap_content" android:layout_height="44dp"
+                    android:minWidth="0dp" android:paddingHorizontal="18dp" android:text="@string/plan" />
             </LinearLayout>
         </LinearLayout>
 
