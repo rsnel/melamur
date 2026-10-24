@@ -127,6 +127,8 @@ class MainActivity : Activity(), LocationListener {
         centerBtn.setOnClickListener {
             if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
         }
+        // filled symbol while the map follows you, hollow once you pan away (as Google Maps)
+        map.onFollowChanged = { f -> centerBtn.setText(if (f) R.string.center_following else R.string.center) }
         searchBar = findViewById(R.id.searchBar); searchResults = findViewById(R.id.searchResults)
         startInput = findViewById(R.id.startInput); endInput = findViewById(R.id.endInput)
         navInputs = findViewById(R.id.navInputs)

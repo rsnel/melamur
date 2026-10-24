@@ -1,5 +1,8 @@
 package it.snel.melamur.map
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
@@ -12,6 +15,9 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.ViewConfiguration
+import android.view.animation.PathInterpolator
+import android.widget.OverScroller
 import it.snel.melamur.data.BusStop
 import it.snel.melamur.data.Poi
 import kotlin.math.atan2
@@ -77,13 +83,58 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
 
     fun setMyLocation(lat: Double, lon: Double, acc: Float, bearing: Float?) {
         me = floatArrayOf(Geo.x(lon), Geo.y(lat), acc, bearing ?: Float.NaN)
-        if (follow) { cx = me!![0]; cy = me!![1] }
+        if (follow && cam?.isRunning != true) { cx = me!![0]; cy = me!![1] }
         invalidate()
+    }
+
+    // ---------------- motion (Material / Google Maps style): kinetic panning,
+    // and animated zoom and camera moves with Material's standard easing
+    private val scroller = OverScroller(ctx)
+    private var flingX = 0; private var flingY = 0
+    private var cam: ValueAnimator? = null
+    private val easing = PathInterpolator(0.2f, 0f, 0f, 1f)
+
+    private fun stopMotion() { scroller.forceFinished(true); cam?.cancel(); cam = null }
+
+    /** Smoothly zoom by [f], keeping the map point under (fx, fy) in place. */
+    private fun animateZoomAt(fx: Float, fy: Float, f: Float) {
+        stopMotion()
+        val s0 = scale; val s1 = (scale * f).coerceIn(MIN_SCALE, MAX_SCALE)
+        val wx = cx + (fx - width / 2f) / s0; val wy = cy - (fy - height / 2f) / s0
+        cam = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 300; interpolator = easing
+            addUpdateListener { a ->
+                val s = (s0 * Math.pow((s1 / s0).toDouble(), (a.animatedValue as Float).toDouble())).toFloat()
+                scale = s; cx = wx - (fx - width / 2f) / s; cy = wy + (fy - height / 2f) / s; invalidate()
+            }
+            start()
+        }
+    }
+
+    /** Smoothly move the camera to centre (tx, ty) at scale [ts]; [onDone] runs unless interrupted. */
+    private fun animateCamera(tx: Float, ty: Float, ts: Float, onDone: (() -> Unit)? = null) {
+        stopMotion()
+        val x0 = cx; val y0 = cy; val s0 = scale; val s1 = ts.coerceIn(MIN_SCALE, MAX_SCALE)
+        cam = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 450; interpolator = easing
+            addUpdateListener { a ->
+                val t = a.animatedValue as Float
+                scale = (s0 * Math.pow((s1 / s0).toDouble(), t.toDouble())).toFloat()
+                cx = x0 + (tx - x0) * t; cy = y0 + (ty - y0) * t; invalidate()
+            }
+            if (onDone != null) addListener(object : AnimatorListenerAdapter() {
+                private var cancelled = false
+                override fun onAnimationCancel(a: Animator) { cancelled = true }
+                override fun onAnimationEnd(a: Animator) { if (!cancelled) onDone() }
+            })
+            start()
+        }
     }
 
     /** Centre on a specific stop (e.g. from search) and zoom in; leaves follow mode. */
     fun centerOn(s: BusStop) {
-        cx = s.x; cy = s.y; if (scale < 3f) scale = 6f; follow = false; invalidate()
+        follow = false
+        animateCamera(s.x, s.y, if (scale < 3f) 6f else scale)
     }
 
     // current view, for saving/restoring a startup position
@@ -102,33 +153,44 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     fun fitBounds(x0: Float, y0: Float, x1: Float, y1: Float, padL: Float, padT: Float, padR: Float, padB: Float) {
         if (width == 0 || height == 0) { post { fitBounds(x0, y0, x1, y1, padL, padT, padR, padB) }; return }
         val aw = (width - padL - padR).coerceAtLeast(1f); val ah = (height - padT - padB).coerceAtLeast(1f)
-        scale = min(aw / maxOf(x1 - x0, 1f), ah / maxOf(y1 - y0, 1f)).coerceIn(0.01f, 25f)
+        val ts = min(aw / maxOf(x1 - x0, 1f), ah / maxOf(y1 - y0, 1f)).coerceIn(MIN_SCALE, MAX_SCALE)
         // put the box centre at the centre of the free area
         val sx = padL + aw / 2f; val sy = padT + ah / 2f
-        cx = (x0 + x1) / 2f - (sx - width / 2f) / scale
-        cy = (y0 + y1) / 2f + (sy - height / 2f) / scale
-        follow = false; invalidate()
+        follow = false
+        animateCamera((x0 + x1) / 2f - (sx - width / 2f) / ts, (y0 + y1) / 2f + (sy - height / 2f) / ts, ts)
     }
 
-    /** Zoom by [f] around the screen centre (keeps follow mode). */
-    fun zoomBy(f: Float) = zoomAt(width / 2f, height / 2f, f)
+    /** Zoom by [f] around the screen centre, animated (keeps follow mode). */
+    fun zoomBy(f: Float) = animateZoomAt(width / 2f, height / 2f, f)
 
-    /** Centre on the user; zoom in to street level if we are zoomed far out. */
+    /** Glide to the user and follow; zoom in to street level if we are zoomed far out. */
     fun centerOnMe(): Boolean {
         val m = me ?: return false
-        cx = m[0]; cy = m[1]; if (scale < 1f) scale = 2f
-        follow = true; invalidate(); return true
+        animateCamera(m[0], m[1], if (scale < 1f) 2f else scale) {
+            follow = true
+            me?.let { cx = it[0]; cy = it[1]; invalidate() }   // catch up with fixes during the glide
+        }
+        return true
     }
 
-    // ---------------- gestures
+    // ---------------- gestures (as Google Maps): drag + fling to pan, pinch,
+    // double-tap to zoom in, double-tap-and-drag for one-finger zoom (the scale
+    // detector's "quick scale"), two-finger tap to zoom out
+    private var scaledInGesture = false
+    private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
+    private var twoTapOk = false
+    private var twoTapStart = 0L
+    private val twoTapPts = FloatArray(4)
+
     private val scaleDet = ScaleGestureDetector(ctx, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(d: ScaleGestureDetector): Boolean {
+            scaledInGesture = true
             val nearCentre = hypot(d.focusX - width / 2f, d.focusY - height / 2f) < min(width, height) * 0.3f
             if (follow && nearCentre) zoomAt(width / 2f, height / 2f, d.scaleFactor)
             else { follow = false; zoomAt(d.focusX, d.focusY, d.scaleFactor) }
             return true
         }
-    })
+    }).apply { isQuickScaleEnabled = true }
     private val gestureDet = GestureDetector(ctx, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent) = true
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
@@ -136,8 +198,20 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             follow = false
             cx += dx / scale; cy -= dy / scale; invalidate(); return true
         }
-        override fun onDoubleTap(e: MotionEvent): Boolean {
-            if (follow) zoomAt(width / 2f, height / 2f, 2f) else zoomAt(e.x, e.y, 2f); return true
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+            if (scaledInGesture || e2.pointerCount > 1) return false
+            follow = false
+            flingX = 0; flingY = 0
+            scroller.fling(0, 0, -vx.toInt(), -vy.toInt(),
+                Int.MIN_VALUE / 2, Int.MAX_VALUE / 2, Int.MIN_VALUE / 2, Int.MAX_VALUE / 2)
+            postInvalidateOnAnimation(); return true
+        }
+        // zoom in on release of a plain double-tap; if the second tap was dragged,
+        // the scale detector's quick scale already zoomed, so do nothing extra
+        override fun onDoubleTapEvent(e: MotionEvent): Boolean {
+            if (e.actionMasked == MotionEvent.ACTION_UP && !scaledInGesture)
+                if (follow) animateZoomAt(width / 2f, height / 2f, 2f) else animateZoomAt(e.x, e.y, 2f)
+            return true
         }
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             val wx = cx + (e.x - width / 2f) / scale; val wy = cy - (e.y - height / 2f) / scale
@@ -157,13 +231,33 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     })
 
     private fun zoomAt(fx: Float, fy: Float, f: Float) {
-        val ns = (scale * f).coerceIn(0.01f, 25f)
+        val ns = (scale * f).coerceIn(MIN_SCALE, MAX_SCALE)
         val wx = cx + (fx - width / 2f) / scale; val wy = cy - (fy - height / 2f) / scale
         cx = wx - (fx - width / 2f) / ns; cy = wy + (fy - height / 2f) / ns
         scale = ns; invalidate()
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            // any touch stops a fling or camera animation, as in Google Maps
+            MotionEvent.ACTION_DOWN -> { stopMotion(); scaledInGesture = false; twoTapOk = false }
+            MotionEvent.ACTION_POINTER_DOWN -> if (e.pointerCount == 2) {
+                twoTapOk = true; twoTapStart = e.eventTime
+                for (i in 0..1) { twoTapPts[2 * i] = e.getX(i); twoTapPts[2 * i + 1] = e.getY(i) }
+            } else twoTapOk = false
+            MotionEvent.ACTION_MOVE -> if (twoTapOk && e.pointerCount >= 2) {
+                for (i in 0..1) if (hypot(e.getX(i) - twoTapPts[2 * i], e.getY(i) - twoTapPts[2 * i + 1]) > slop)
+                    twoTapOk = false
+            }
+            // two fingers down and up again quickly without moving: zoom out
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (twoTapOk && e.eventTime - twoTapStart < TWO_TAP_MS) {
+                    val mx = (twoTapPts[0] + twoTapPts[2]) / 2f; val my = (twoTapPts[1] + twoTapPts[3]) / 2f
+                    if (follow) animateZoomAt(width / 2f, height / 2f, 0.5f) else animateZoomAt(mx, my, 0.5f)
+                }
+                twoTapOk = false
+            }
+        }
         scaleDet.onTouchEvent(e); gestureDet.onTouchEvent(e); return true
     }
 
@@ -248,6 +342,12 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val arrow = Path()
 
     override fun onDraw(c: Canvas) {
+        // kinetic panning: advance the fling by this frame's distance
+        if (!scroller.isFinished && scroller.computeScrollOffset()) {
+            cx += (scroller.currX - flingX) / scale; cy -= (scroller.currY - flingY) / scale
+            flingX = scroller.currX; flingY = scroller.currY
+            postInvalidateOnAnimation()
+        }
         c.drawColor(sea)
         val hw = width / 2f / scale; val hh = height / 2f / scale
         val vx0 = cx - hw; val vx1 = cx + hw; val vy0 = cy - hh; val vy1 = cy + hh
@@ -429,6 +529,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
 
     companion object {
         const val MIN_STOP_SCALE = 0.25f
+        private const val MIN_SCALE = 0.01f   // px per metre: whole islands
+        private const val MAX_SCALE = 25f     // px per metre: street detail
+        private const val TWO_TAP_MS = 300L   // two-finger tap must be quicker than this
         // stop names show from this zoom (lowered so they appear earlier); streets a bit later
         private const val STOP_LABEL_SCALE = 1.2f
         private const val STREET_LABEL_SCALE = 2.0f

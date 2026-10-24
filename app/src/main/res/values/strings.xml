@@ -8,6 +8,7 @@
     <string name="consent_withdraw">Withdraw consent</string>
     <string name="close">Close</string>
     <string name="center">◎</string>
+    <string name="center_following">◉</string>
     <string name="privacy">Privacy</string>
     <string name="menu">☰</string>
     <string name="tab_map">Map</string>
