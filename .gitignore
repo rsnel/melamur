@@ -6,3 +6,6 @@ local.properties
 app/src/main/assets/client.p12
 server/certs/
 __pycache__/
+# release signing: never commit keys
+*.jks
+*.keystore

@@ -104,6 +104,9 @@ class MainActivity : Activity(), LocationListener {
     private var searching = false
     private var showLegStops = false
     @Volatile private var lineColorCache: Map<String, List<Int>> = emptyMap()
+    // last known position (real GPS, or the simulated one in debug), for distances
+    private var myLat: Double? = null
+    private var myLon: Double? = null
     private val tabOn = Color.rgb(238, 0, 0)
     private val tabOff = Color.rgb(60, 60, 60)
     private val iconOff = Color.rgb(150, 150, 150)
@@ -743,7 +746,10 @@ class MainActivity : Activity(), LocationListener {
         override fun getView(pos: Int, cv: View?, parent: ViewGroup): View {
             val v = super.getView(pos, cv, parent); val r = getItem(pos)!!
             v.findViewById<TextView>(android.R.id.text1).apply { text = r.label; setTextColor(white) }
-            v.findViewById<TextView>(android.R.id.text2).apply { text = r.sublabel; setTextColor(grey) }
+            val dist = distanceFromMe(r.lat, r.lon)
+            v.findViewById<TextView>(android.R.id.text2).apply {
+                text = if (dist != null) "${r.sublabel}  ·  $dist" else r.sublabel; setTextColor(grey)
+            }
             return v
         }
     }
@@ -979,8 +985,17 @@ class MainActivity : Activity(), LocationListener {
         }
     }
 
-    override fun onLocationChanged(l: Location) =
+    override fun onLocationChanged(l: Location) {
+        myLat = l.latitude; myLon = l.longitude
         map.setMyLocation(l.latitude, l.longitude, l.accuracy, if (l.hasBearing() && l.speed > 2f) l.bearing else null)
+    }
+
+    /** "350 m" / "1.2 km" from the current position, or null if it is not known yet. */
+    private fun distanceFromMe(lat: Double, lon: Double): String? {
+        val la = myLat ?: return null; val lo = myLon ?: return null
+        val m = Math.hypot((Geo.x(lon) - Geo.x(lo)).toDouble(), (Geo.y(lat) - Geo.y(la)).toDouble())
+        return if (m < 1000) "${Math.round(m / 10) * 10} m" else "%.1f km".format(java.util.Locale.US, m / 1000)
+    }
 
     @Deprecated("needed for API < 29") override fun onStatusChanged(p: String?, s: Int, b: Bundle?) {}
     override fun onProviderEnabled(p: String) {}
@@ -989,7 +1004,10 @@ class MainActivity : Activity(), LocationListener {
     // ---------------- bottom panel
     private fun render() {
         val n = NavHub.snapshot
-        if (n.simulated && n.lat != null && n.lon != null) map.setMyLocation(n.lat, n.lon, 5f, n.bearing)
+        if (n.simulated && n.lat != null && n.lon != null) {
+            myLat = n.lat; myLon = n.lon
+            map.setMyLocation(n.lat, n.lon, 5f, n.bearing)
+        }
         if (n.active || n.arrived) {
             panel.visibility = View.VISIBLE
             status.text = if (n.arrived) "" else "${n.distanceM} m"

@@ -10,5 +10,15 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.14.3' }
       - run: gradle --no-daemon assembleDebug
+      # Build the release variant signed with a throwaway key made right here, to
+      # check the signing setup end to end. (Real releases: release.yml.)
+      - name: Release build with a throwaway key
+        run: |
+          keytool -genkeypair -keystore "$RUNNER_TEMP/ci.jks" -alias ci -keyalg RSA -keysize 2048 \
+                  -validity 1 -dname "CN=MelaMur CI" -storepass ci-only -keypass ci-only -noprompt
+          MELAMUR_KEYSTORE="$RUNNER_TEMP/ci.jks" MELAMUR_KEYSTORE_PASSWORD=ci-only \
+          MELAMUR_KEY_ALIAS=ci MELAMUR_KEY_PASSWORD=ci-only gradle --no-daemon assembleRelease
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$BT/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
         with: { name: melamur-debug-apk, path: app/build/outputs/apk/debug/*.apk }
