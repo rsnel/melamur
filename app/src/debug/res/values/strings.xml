@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- debug builds show as a separate app on the phone -->
+<resources>
+    <string name="app_name">MelaMur debug</string>
+</resources>

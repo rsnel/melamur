@@ -41,6 +41,15 @@ android {
         }
     }
     buildTypes {
+        // Debug builds are a separate app (it.snel.melamur.debug, "MelaMur debug"), so a
+        // debug build never replaces a release and both can be installed side by side.
+        // When the release key is available (CI on this repo) debug builds are signed with
+        // it too: a stable key, so each new debug build installs over the previous one.
+        getByName("debug") {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+            if (releaseKeystore != null) signingConfig = signingConfigs.getByName("release")
+        }
         getByName("release") {
             isMinifyEnabled = false   // no R8 until it has been tested on a device
             // without a keystore the release APK is simply left unsigned

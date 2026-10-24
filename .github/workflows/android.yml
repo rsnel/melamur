@@ -9,7 +9,26 @@ jobs:
         with: { distribution: temurin, java-version: '17' }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.14.3' }
-      - run: gradle --no-daemon assembleDebug
+
+      # Debug build (app id it.snel.melamur.debug). Signed with the release key when
+      # the secrets are available, so each debug build installs over the previous one.
+      - name: Build debug APK
+        env:
+          KEYSTORE_B64: ${{ secrets.MELAMUR_KEYSTORE_BASE64 }}
+          MELAMUR_KEYSTORE_PASSWORD: ${{ secrets.MELAMUR_KEYSTORE_PASSWORD }}
+          MELAMUR_KEY_ALIAS: ${{ secrets.MELAMUR_KEY_ALIAS }}
+          MELAMUR_KEY_PASSWORD: ${{ secrets.MELAMUR_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            export MELAMUR_KEYSTORE="$RUNNER_TEMP/release.jks"
+          else
+            echo "::notice::No signing secrets (e.g. a pull request from a fork): one-off debug key"
+          fi
+          gradle --no-daemon assembleDebug
+          rm -f "$RUNNER_TEMP/release.jks"
+          cp app/build/outputs/apk/debug/app-debug.apk melamur-debug.apk
+
       # Build the release variant signed with a throwaway key made right here, to
       # check the signing setup end to end. (Real releases: release.yml.)
       - name: Release build with a throwaway key
@@ -20,5 +39,12 @@ jobs:
           MELAMUR_KEY_ALIAS=ci MELAMUR_KEY_PASSWORD=ci-only gradle --no-daemon assembleRelease
           BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
           "$BT/apksigner" verify --print-certs app/build/outputs/apk/release/app-release.apk
-      - uses: actions/upload-artifact@v4
-        with: { name: melamur-debug-apk, path: app/build/outputs/apk/debug/*.apk }
+
+      # A plain .apk (not zipped), downloadable straight from the run page
+      - uses: actions/upload-artifact@v7
+        id: apk
+        with: { name: melamur-debug.apk, path: melamur-debug.apk, archive: false }
+      - name: Download link
+        run: |
+          printf '### Debug APK\n\n[melamur-debug.apk](%s) (sign in to GitHub to download)\n' \
+            "${{ steps.apk.outputs.artifact-url }}" >> "$GITHUB_STEP_SUMMARY"
