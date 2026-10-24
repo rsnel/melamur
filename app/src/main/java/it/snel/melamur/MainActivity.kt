@@ -15,8 +15,15 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.net.Uri
+import android.hardware.GeomagneticField
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
+import android.view.Surface
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
@@ -91,6 +98,7 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var textContent: LinearLayout
     private lateinit var centerBtn: Button
     private lateinit var zoomBox: View
+    private lateinit var compassBtn: ImageButton
     private lateinit var tabExplore: Button
     private lateinit var tabNavigate: Button
     private lateinit var tabMap: ImageButton
@@ -124,11 +132,22 @@ class MainActivity : Activity(), LocationListener {
         findViewById<Button>(R.id.zoomIn).setOnClickListener { map.zoomBy(2f) }
         findViewById<Button>(R.id.zoomOut).setOnClickListener { map.zoomBy(0.5f) }
         centerBtn = findViewById(R.id.center)
+        // center-me cycles as in Google Maps: go to me and follow -> heading-up -> north-up follow
         centerBtn.setOnClickListener {
-            if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
+            when {
+                !map.follow -> if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
+                !map.headingUp -> map.setHeadingUpMode(true)
+                else -> map.setHeadingUpMode(false)
+            }
         }
-        // filled symbol while the map follows you, hollow once you pan away (as Google Maps)
-        map.onFollowChanged = { f -> centerBtn.setText(if (f) R.string.center_following else R.string.center) }
+        // ◎ not following, ◉ following, ▲ heading-up; the compass sensor only runs in heading-up
+        map.onTrackChanged = { f, h ->
+            centerBtn.setText(when { h -> R.string.center_heading; f -> R.string.center_following; else -> R.string.center })
+            updateHeadingSensor()
+        }
+        compassBtn = findViewById(R.id.compass)
+        compassBtn.setOnClickListener { map.resetNorth() }
+        map.onBearingChanged = { b -> compassBtn.rotation = -b; updateCompass() }
         searchBar = findViewById(R.id.searchBar); searchResults = findViewById(R.id.searchResults)
         startInput = findViewById(R.id.startInput); endInput = findViewById(R.id.endInput)
         navInputs = findViewById(R.id.navInputs)
@@ -194,6 +213,7 @@ class MainActivity : Activity(), LocationListener {
         // center-me lives just above the bottom bar; only useful on the map
         centerBtn.visibility = if (viewKind == ViewKind.MAP) View.VISIBLE else View.GONE
         zoomBox.visibility = centerBtn.visibility
+        updateCompass()
         refreshNavBar()
     }
 
@@ -484,8 +504,90 @@ class MainActivity : Activity(), LocationListener {
         return if (b in 0 until a) ts.subList(b + 1, a).toList() else emptyList()
     }
 
-    override fun onResume() { super.onResume(); NavHub.listen(navListener); startOwnLocation(); render() }
-    override fun onPause() { NavHub.unlisten(navListener); lm.removeUpdates(this); super.onPause() }
+    override fun onResume() {
+        super.onResume(); resumed = true
+        NavHub.listen(navListener); startOwnLocation(); updateHeadingSensor(); render()
+    }
+    override fun onPause() {
+        resumed = false; updateHeadingSensor()
+        NavHub.unlisten(navListener); lm.removeUpdates(this); super.onPause()
+    }
+
+    /** Compass button: on the map view, only while the map is not north up; its needle points north. */
+    private fun updateCompass() {
+        if (!::compassBtn.isInitialized) return
+        val turned = kotlin.math.abs(MapView.angleDiff(map.bearing, 0f)) > 0.5f
+        compassBtn.visibility = if (viewKind == ViewKind.MAP && turned) View.VISIBLE else View.GONE
+    }
+
+    // ---------------- heading for heading-up mode: the phone's compass (rotation
+    // vector sensor), or the GPS / simulated course while moving faster than a
+    // walk (more reliable than a compass inside a bus); smoothed, true north
+    private val sensors by lazy { getSystemService(SensorManager::class.java) }
+    private var resumed = false
+    private var sensorActive = false
+    private var compassDeg = Float.NaN
+    private var courseDeg = Float.NaN
+    private var courseAt = 0L
+    private var headingDeg = Float.NaN
+    private var declination = 0f
+    private val rotM = FloatArray(9); private val rotR = FloatArray(9); private val orient = FloatArray(3)
+    private val headingListener = object : SensorEventListener {
+        override fun onSensorChanged(ev: SensorEvent) {
+            // some devices deliver 5 values, which getRotationMatrixFromVector rejects
+            SensorManager.getRotationMatrixFromVector(rotM, ev.values.copyOf(minOf(4, ev.values.size)))
+            val (ax, ay) = when (displayRotation()) {
+                Surface.ROTATION_90 -> SensorManager.AXIS_Y to SensorManager.AXIS_MINUS_X
+                Surface.ROTATION_180 -> SensorManager.AXIS_MINUS_X to SensorManager.AXIS_MINUS_Y
+                Surface.ROTATION_270 -> SensorManager.AXIS_MINUS_Y to SensorManager.AXIS_X
+                else -> SensorManager.AXIS_X to SensorManager.AXIS_Y
+            }
+            SensorManager.remapCoordinateSystem(rotM, ax, ay, rotR)
+            SensorManager.getOrientation(rotR, orient)
+            // magnetic north -> true north (the map's north)
+            compassDeg = MapView.norm360(Math.toDegrees(orient[0].toDouble()).toFloat() + declination)
+            tickHeading()
+        }
+        override fun onAccuracyChanged(s: Sensor?, accuracy: Int) {}
+    }
+
+    @Suppress("DEPRECATION")
+    private fun displayRotation(): Int =
+        if (Build.VERSION.SDK_INT >= 30) display?.rotation ?: Surface.ROTATION_0 else windowManager.defaultDisplay.rotation
+
+    /** Run the compass only while heading-up is on and the app is in front. */
+    private fun updateHeadingSensor() {
+        val want = resumed && map.headingUp
+        if (want == sensorActive) return
+        if (want) {
+            val s = sensors.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+                ?: sensors.getDefaultSensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
+            if (s != null) {
+                declination = GeomagneticField((myLat ?: 35.9).toFloat(), (myLon ?: 14.45).toFloat(), 0f,
+                    System.currentTimeMillis()).declination
+                sensorActive = sensors.registerListener(headingListener, s, SensorManager.SENSOR_DELAY_GAME)
+            }
+            // no compass sensor: heading-up then follows the GPS course only
+        } else {
+            sensors.unregisterListener(headingListener); sensorActive = false; headingDeg = Float.NaN
+        }
+    }
+
+    /** A direction of travel from GPS or the simulation (only meaningful while moving). */
+    private fun setCourse(deg: Float) {
+        courseDeg = deg; courseAt = SystemClock.elapsedRealtime()
+        if (!sensorActive) tickHeading()   // without a compass, fixes are the only clock
+    }
+
+    /** Smooth towards the course (recent, while moving) or else the compass, and turn the map. */
+    private fun tickHeading() {
+        val recentCourse = !courseDeg.isNaN() && SystemClock.elapsedRealtime() - courseAt < 4000
+        val target = if (recentCourse) courseDeg else compassDeg
+        if (target.isNaN()) return
+        val k = if (sensorActive) 0.15f else 1f
+        headingDeg = if (headingDeg.isNaN()) target else MapView.norm360(headingDeg + k * MapView.angleDiff(target, headingDeg))
+        map.setDeviceHeading(headingDeg)
+    }
 
     // ---------------- database import (SAF)
     private fun promptImport() {
@@ -989,6 +1091,7 @@ class MainActivity : Activity(), LocationListener {
 
     override fun onLocationChanged(l: Location) {
         myLat = l.latitude; myLon = l.longitude
+        if (l.hasBearing() && l.speed > 3f) setCourse(l.bearing)   // moving: trust the course over the compass
         map.setMyLocation(l.latitude, l.longitude, l.accuracy, if (l.hasBearing() && l.speed > 2f) l.bearing else null)
     }
 
@@ -1008,6 +1111,7 @@ class MainActivity : Activity(), LocationListener {
         val n = NavHub.snapshot
         if (n.simulated && n.lat != null && n.lon != null) {
             myLat = n.lat; myLon = n.lon
+            n.bearing?.let { setCourse(it) }
             map.setMyLocation(n.lat, n.lon, 5f, n.bearing)
         }
         if (n.active || n.arrived) {

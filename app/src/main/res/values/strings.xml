@@ -9,6 +9,8 @@
     <string name="close">Close</string>
     <string name="center">◎</string>
     <string name="center_following">◉</string>
+    <string name="center_heading">▲</string>
+    <string name="cd_compass">Turn map to north up</string>
     <string name="privacy">Privacy</string>
     <string name="menu">☰</string>
     <string name="tab_map">Map</string>

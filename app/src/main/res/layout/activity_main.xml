@@ -105,6 +105,14 @@
                 android:orientation="vertical" android:padding="14dp" />
         </ScrollView>
 
+        <!-- compass: top-left, only while the map is not north up; tap = north up -->
+        <ImageButton android:id="@+id/compass"
+            android:layout_width="44dp" android:layout_height="44dp"
+            android:layout_gravity="top|start" android:layout_margin="12dp"
+            android:background="@drawable/compass_bg" android:padding="8dp"
+            android:scaleType="fitCenter" android:src="@drawable/ic_compass"
+            android:contentDescription="@string/cd_compass" android:visibility="gone" />
+
         <!-- zoom in / out: top-right; hidden in text mode -->
         <LinearLayout android:id="@+id/zoomBox"
             android:layout_width="wrap_content" android:layout_height="wrap_content"

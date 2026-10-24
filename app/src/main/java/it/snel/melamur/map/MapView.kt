@@ -73,39 +73,109 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     var onStopTapped: ((BusStop) -> Unit)? = null
     /** Long-press on the map: reports the world position and the POI hit, if any. */
     var onMapLongPress: ((lat: Double, lon: Double, poi: Poi?) -> Unit)? = null
-    var onFollowChanged: ((Boolean) -> Unit)? = null
+    /** Tracking changed: [follow] = the map follows you; [headingUp] = and turns with your heading. */
+    var onTrackChanged: ((follow: Boolean, headingUp: Boolean) -> Unit)? = null
+    /** The map's bearing changed (degrees; 0 = north up), e.g. to turn a compass button. */
+    var onBearingChanged: ((Float) -> Unit)? = null
 
-    // view state: centre in projected metres, scale in px per metre
+    // view state: centre in projected metres, scale in px per metre, and the
+    // bearing: the compass direction that points up the screen (0 = north up)
     private var cx = Geo.x(14.43); private var cy = Geo.y(35.90); private var scale = 0.035f
+    private var rot = 0f
+        set(v) { val n = norm360(v); if (n != field) { field = n; onBearingChanged?.invoke(n) } }
+    val bearing get() = rot
+
     var follow = false
-        private set(v) { if (field != v) { field = v; onFollowChanged?.invoke(v) } }
-    private var me: FloatArray? = null // x, y, accuracy, bearing(NaN if unknown)
+        private set(v) {
+            if (field == v) return
+            field = v
+            if (!v) { headingUp = false; followOff = 0f }
+            onTrackChanged?.invoke(field, headingUp)
+        }
+    var headingUp = false
+        private set(v) { if (field != v) { field = v; onTrackChanged?.invoke(follow, v) } }
+    // while following, your position sits this fraction of the height below the
+    // centre (heading-up shows more of what lies ahead, as navigation apps do)
+    private var followOff = 0f
+    private var me: FloatArray? = null // x, y, accuracy, course (NaN if unknown)
+    private var deviceHeading = Float.NaN
+
+    // ---------------- screen <-> world with rotation
+    // world (east, north) -> screen: rotate by +bearing (counter-clockwise), then
+    // scale, flip y and move to the view centre; the inverse for touches.
+    private val tmp = FloatArray(2)
+    private fun cosR() = cos(Math.toRadians(rot.toDouble())).toFloat()
+    private fun sinR() = sin(Math.toRadians(rot.toDouble())).toFloat()
+
+    /** World point under screen point (px, py), written to [out]. */
+    private fun toWorld(px: Float, py: Float, out: FloatArray = tmp): FloatArray {
+        val u = (px - width / 2f) / scale; val v = -(py - height / 2f) / scale
+        val c = cosR(); val s = sinR()
+        out[0] = cx + u * c + v * s; out[1] = cy - u * s + v * c
+        return out
+    }
+
+    /** Move the centre so world point (wx, wy) appears at screen point (px, py). */
+    private fun anchor(px: Float, py: Float, wx: Float, wy: Float) {
+        val u = (px - width / 2f) / scale; val v = -(py - height / 2f) / scale
+        val c = cosR(); val s = sinR()
+        cx = wx - (u * c + v * s); cy = wy - (-u * s + v * c)
+    }
+
+    /** Move the map with a screen-space drag of (dx, dy) px (GestureDetector's distance). */
+    private fun panBy(dx: Float, dy: Float) {
+        val u = dx / scale; val v = -dy / scale
+        val c = cosR(); val s = sinR()
+        cx += u * c + v * s; cy += -u * s + v * c
+    }
+
+    private fun followY() = height / 2f + followOff * height
+    private fun anchorMe() { me?.let { anchor(width / 2f, followY(), it[0], it[1]) } }
+    /** Zoom/rotate focus: your position while following, else the given point. */
+    private fun focusX(x: Float) = if (follow) width / 2f else x
+    private fun focusY(y: Float) = if (follow) followY() else y
 
     fun setMyLocation(lat: Double, lon: Double, acc: Float, bearing: Float?) {
         me = floatArrayOf(Geo.x(lon), Geo.y(lat), acc, bearing ?: Float.NaN)
-        if (follow && cam?.isRunning != true) { cx = me!![0]; cy = me!![1] }
+        if (follow && !animating()) anchorMe()
+        invalidate()
+    }
+
+    /** Heading of the phone / direction of travel (degrees from true north); heading-up turns with it. */
+    fun setDeviceHeading(deg: Float) {
+        deviceHeading = deg
+        if (headingUp && !animating() && !rotating) { rot = deg; anchorMe() }
         invalidate()
     }
 
     // ---------------- motion (Material / Google Maps style): kinetic panning,
-    // and animated zoom and camera moves with Material's standard easing
+    // and animated zoom, camera moves and turns with Material's standard easing
     private val scroller = OverScroller(ctx)
     private var flingX = 0; private var flingY = 0
     private var cam: ValueAnimator? = null
     private val easing = PathInterpolator(0.2f, 0f, 0f, 1f)
 
+    private fun animating() = cam?.isRunning == true
     private fun stopMotion() { scroller.forceFinished(true); cam?.cancel(); cam = null }
+
+    private fun ValueAnimator.whenDone(onDone: (() -> Unit)?) {
+        if (onDone != null) addListener(object : AnimatorListenerAdapter() {
+            private var cancelled = false
+            override fun onAnimationCancel(a: Animator) { cancelled = true }
+            override fun onAnimationEnd(a: Animator) { if (!cancelled) onDone() }
+        })
+    }
 
     /** Smoothly zoom by [f], keeping the map point under (fx, fy) in place. */
     private fun animateZoomAt(fx: Float, fy: Float, f: Float) {
         stopMotion()
         val s0 = scale; val s1 = (scale * f).coerceIn(MIN_SCALE, MAX_SCALE)
-        val wx = cx + (fx - width / 2f) / s0; val wy = cy - (fy - height / 2f) / s0
+        val w = toWorld(fx, fy, FloatArray(2))
         cam = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 300; interpolator = easing
             addUpdateListener { a ->
-                val s = (s0 * Math.pow((s1 / s0).toDouble(), (a.animatedValue as Float).toDouble())).toFloat()
-                scale = s; cx = wx - (fx - width / 2f) / s; cy = wy + (fy - height / 2f) / s; invalidate()
+                scale = (s0 * Math.pow((s1 / s0).toDouble(), (a.animatedValue as Float).toDouble())).toFloat()
+                anchor(fx, fy, w[0], w[1]); invalidate()
             }
             start()
         }
@@ -122,13 +192,38 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 scale = (s0 * Math.pow((s1 / s0).toDouble(), t.toDouble())).toFloat()
                 cx = x0 + (tx - x0) * t; cy = y0 + (ty - y0) * t; invalidate()
             }
-            if (onDone != null) addListener(object : AnimatorListenerAdapter() {
-                private var cancelled = false
-                override fun onAnimationCancel(a: Animator) { cancelled = true }
-                override fun onAnimationEnd(a: Animator) { if (!cancelled) onDone() }
-            })
+            whenDone(onDone)
             start()
         }
+    }
+
+    /** Smoothly turn to bearing [target] (the short way round), moving your position to [endOff]. */
+    private fun animateBearing(target: Float, endOff: Float, onDone: (() -> Unit)? = null) {
+        stopMotion()
+        val r0 = rot; val d = angleDiff(target, r0); val o0 = followOff
+        cam = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 350; interpolator = easing
+            addUpdateListener { a ->
+                val t = a.animatedValue as Float
+                rot = r0 + d * t   // turns around the view centre ...
+                if (follow) { followOff = o0 + (endOff - o0) * t; anchorMe() }   // ... or around you
+                invalidate()
+            }
+            whenDone(onDone)
+            start()
+        }
+    }
+
+    /** Compass button: turn back to north up (keeps following; leaves heading-up). */
+    fun resetNorth() { headingUp = false; animateBearing(0f, 0f) }
+
+    /** Heading-up on (only while following) or off (back to north up). */
+    fun setHeadingUpMode(on: Boolean) {
+        if (on) {
+            if (!follow) return
+            headingUp = true
+            animateBearing(if (deviceHeading.isNaN()) rot else deviceHeading, HEADING_OFFSET)
+        } else { headingUp = false; animateBearing(0f, 0f) }
     }
 
     /** Centre on a specific stop (e.g. from search) and zoom in; leaves follow mode. */
@@ -148,45 +243,58 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     /**
      * Centre and zoom so the world box (x0,y0)-(x1,y1) fits inside the view
      * minus the given screen paddings (px), e.g. to keep it clear of overlay
-     * buttons. Leaves follow mode.
+     * buttons. Keeps the current bearing; leaves follow mode.
      */
     fun fitBounds(x0: Float, y0: Float, x1: Float, y1: Float, padL: Float, padT: Float, padR: Float, padB: Float) {
         if (width == 0 || height == 0) { post { fitBounds(x0, y0, x1, y1, padL, padT, padR, padB) }; return }
         val aw = (width - padL - padR).coerceAtLeast(1f); val ah = (height - padT - padB).coerceAtLeast(1f)
-        val ts = min(aw / maxOf(x1 - x0, 1f), ah / maxOf(y1 - y0, 1f)).coerceIn(MIN_SCALE, MAX_SCALE)
+        // the box's extent as seen on the (possibly rotated) screen
+        val mx = (x0 + x1) / 2f; val my = (y0 + y1) / 2f
+        val c = cosR(); val s = sinR()
+        var bw = 1f; var bh = 1f
+        for ((px, py) in listOf(x0 to y0, x1 to y0, x0 to y1, x1 to y1)) {
+            val dx = px - mx; val dy = py - my
+            bw = maxOf(bw, 2 * kotlin.math.abs(dx * c - dy * s)); bh = maxOf(bh, 2 * kotlin.math.abs(dx * s + dy * c))
+        }
+        val ts = min(aw / bw, ah / bh).coerceIn(MIN_SCALE, MAX_SCALE)
         // put the box centre at the centre of the free area
-        val sx = padL + aw / 2f; val sy = padT + ah / 2f
+        val u = (padL + aw / 2f - width / 2f) / ts; val v = -(padT + ah / 2f - height / 2f) / ts
         follow = false
-        animateCamera((x0 + x1) / 2f - (sx - width / 2f) / ts, (y0 + y1) / 2f + (sy - height / 2f) / ts, ts)
+        animateCamera(mx - (u * c + v * s), my - (-u * s + v * c), ts)
     }
 
-    /** Zoom by [f] around the screen centre, animated (keeps follow mode). */
-    fun zoomBy(f: Float) = animateZoomAt(width / 2f, height / 2f, f)
+    /** Zoom by [f] around the screen centre (or you, while following), animated. */
+    fun zoomBy(f: Float) = animateZoomAt(width / 2f, focusY(height / 2f), f)
 
     /** Glide to the user and follow; zoom in to street level if we are zoomed far out. */
     fun centerOnMe(): Boolean {
         val m = me ?: return false
         animateCamera(m[0], m[1], if (scale < 1f) 2f else scale) {
             follow = true
-            me?.let { cx = it[0]; cy = it[1]; invalidate() }   // catch up with fixes during the glide
+            anchorMe(); invalidate()   // catch up with fixes during the glide
         }
         return true
     }
 
     // ---------------- gestures (as Google Maps): drag + fling to pan, pinch,
-    // double-tap to zoom in, double-tap-and-drag for one-finger zoom (the scale
-    // detector's "quick scale"), two-finger tap to zoom out
+    // twist to rotate, double-tap to zoom in, double-tap-and-drag for one-finger
+    // zoom (the scale detector's "quick scale"), two-finger tap to zoom out
     private var scaledInGesture = false
     private val slop = ViewConfiguration.get(ctx).scaledTouchSlop
     private var twoTapOk = false
     private var twoTapStart = 0L
     private val twoTapPts = FloatArray(4)
+    // rotation only starts after a deliberate twist, so pinching does not turn the map
+    private var rotating = false
+    private var rotInit = false
+    private var rotLast = 0f
+    private var rotAccum = 0f
 
     private val scaleDet = ScaleGestureDetector(ctx, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(d: ScaleGestureDetector): Boolean {
             scaledInGesture = true
-            val nearCentre = hypot(d.focusX - width / 2f, d.focusY - height / 2f) < min(width, height) * 0.3f
-            if (follow && nearCentre) zoomAt(width / 2f, height / 2f, d.scaleFactor)
+            val nearAnchor = hypot(d.focusX - width / 2f, d.focusY - followY()) < min(width, height) * 0.3f
+            if (follow && nearAnchor) zoomAt(width / 2f, followY(), d.scaleFactor)
             else { follow = false; zoomAt(d.focusX, d.focusY, d.scaleFactor) }
             return true
         }
@@ -196,10 +304,10 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
             if (scaleDet.isInProgress || e2.pointerCount > 1) return true
             follow = false
-            cx += dx / scale; cy -= dy / scale; invalidate(); return true
+            panBy(dx, dy); invalidate(); return true
         }
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-            if (scaledInGesture || e2.pointerCount > 1) return false
+            if (scaledInGesture || rotating || e2.pointerCount > 1) return false
             follow = false
             flingX = 0; flingY = 0
             scroller.fling(0, 0, -vx.toInt(), -vy.toInt(),
@@ -210,11 +318,11 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         // the scale detector's quick scale already zoomed, so do nothing extra
         override fun onDoubleTapEvent(e: MotionEvent): Boolean {
             if (e.actionMasked == MotionEvent.ACTION_UP && !scaledInGesture)
-                if (follow) animateZoomAt(width / 2f, height / 2f, 2f) else animateZoomAt(e.x, e.y, 2f)
+                animateZoomAt(focusX(e.x), focusY(e.y), 2f)
             return true
         }
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            val wx = cx + (e.x - width / 2f) / scale; val wy = cy - (e.y - height / 2f) / scale
+            val w = toWorld(e.x, e.y); val wx = w[0]; val wy = w[1]
             val r = 24 * dp / scale
             stops.minByOrNull { hypot(it.x - wx, it.y - wy) }
                 ?.takeIf { hypot(it.x - wx, it.y - wy) < r && scale > MIN_STOP_SCALE }
@@ -222,7 +330,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             return true
         }
         override fun onLongPress(e: MotionEvent) {
-            val wx = cx + (e.x - width / 2f) / scale; val wy = cy - (e.y - height / 2f) / scale
+            val w = toWorld(e.x, e.y); val wx = w[0]; val wy = w[1]
             val r = 24 * dp / scale
             val poi = pois.minByOrNull { hypot(it.x - wx, it.y - wy) }
                 ?.takeIf { hypot(it.x - wx, it.y - wy) < r }
@@ -231,31 +339,56 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     })
 
     private fun zoomAt(fx: Float, fy: Float, f: Float) {
-        val ns = (scale * f).coerceIn(MIN_SCALE, MAX_SCALE)
-        val wx = cx + (fx - width / 2f) / scale; val wy = cy - (fy - height / 2f) / scale
-        cx = wx - (fx - width / 2f) / ns; cy = wy + (fy - height / 2f) / ns
-        scale = ns; invalidate()
+        val w = toWorld(fx, fy)
+        scale = (scale * f).coerceIn(MIN_SCALE, MAX_SCALE)
+        anchor(fx, fy, w[0], w[1]); invalidate()
     }
+
+    /** Turn the map by [d] degrees around screen point (fx, fy). */
+    private fun rotateAt(fx: Float, fy: Float, d: Float) {
+        val w = toWorld(fx, fy)
+        rot += d
+        anchor(fx, fy, w[0], w[1]); invalidate()
+    }
+
+    private fun pointerAngle(e: MotionEvent) =
+        Math.toDegrees(atan2((e.getY(1) - e.getY(0)).toDouble(), (e.getX(1) - e.getX(0)).toDouble())).toFloat()
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             // any touch stops a fling or camera animation, as in Google Maps
-            MotionEvent.ACTION_DOWN -> { stopMotion(); scaledInGesture = false; twoTapOk = false }
-            MotionEvent.ACTION_POINTER_DOWN -> if (e.pointerCount == 2) {
-                twoTapOk = true; twoTapStart = e.eventTime
-                for (i in 0..1) { twoTapPts[2 * i] = e.getX(i); twoTapPts[2 * i + 1] = e.getY(i) }
-            } else twoTapOk = false
-            MotionEvent.ACTION_MOVE -> if (twoTapOk && e.pointerCount >= 2) {
-                for (i in 0..1) if (hypot(e.getX(i) - twoTapPts[2 * i], e.getY(i) - twoTapPts[2 * i + 1]) > slop)
-                    twoTapOk = false
+            MotionEvent.ACTION_DOWN -> {
+                stopMotion(); scaledInGesture = false; twoTapOk = false; rotating = false; rotInit = false
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (e.pointerCount == 2) {
+                    twoTapOk = true; twoTapStart = e.eventTime
+                    for (i in 0..1) { twoTapPts[2 * i] = e.getX(i); twoTapPts[2 * i + 1] = e.getY(i) }
+                } else twoTapOk = false
+                rotInit = false; rotAccum = 0f
+            }
+            MotionEvent.ACTION_MOVE -> if (e.pointerCount >= 2) {
+                if (twoTapOk) for (i in 0..1)
+                    if (hypot(e.getX(i) - twoTapPts[2 * i], e.getY(i) - twoTapPts[2 * i + 1]) > slop) twoTapOk = false
+                // twist: fingers turning clockwise turn the map clockwise (the bearing decreases)
+                val a = pointerAngle(e)
+                if (!rotInit) { rotInit = true; rotLast = a }
+                else {
+                    val d = angleDiff(a, rotLast); rotLast = a; rotAccum += d
+                    if (!rotating && kotlin.math.abs(rotAccum) > ROT_THRESHOLD) { rotating = true; headingUp = false }
+                    if (rotating) {
+                        val mx = (e.getX(0) + e.getX(1)) / 2f; val my = (e.getY(0) + e.getY(1)) / 2f
+                        rotateAt(focusX(mx), focusY(my), -d)
+                    }
+                }
             }
             // two fingers down and up again quickly without moving: zoom out
             MotionEvent.ACTION_POINTER_UP -> {
                 if (twoTapOk && e.eventTime - twoTapStart < TWO_TAP_MS) {
                     val mx = (twoTapPts[0] + twoTapPts[2]) / 2f; val my = (twoTapPts[1] + twoTapPts[3]) / 2f
-                    if (follow) animateZoomAt(width / 2f, height / 2f, 0.5f) else animateZoomAt(mx, my, 0.5f)
+                    animateZoomAt(focusX(mx), focusY(my), 0.5f)
                 }
-                twoTapOk = false
+                twoTapOk = false; rotInit = false   // pointer indices change: re-take the angle
             }
         }
         scaleDet.onTouchEvent(e); gestureDet.onTouchEvent(e); return true
@@ -344,15 +477,17 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     override fun onDraw(c: Canvas) {
         // kinetic panning: advance the fling by this frame's distance
         if (!scroller.isFinished && scroller.computeScrollOffset()) {
-            cx += (scroller.currX - flingX) / scale; cy -= (scroller.currY - flingY) / scale
+            panBy((scroller.currX - flingX).toFloat(), (scroller.currY - flingY).toFloat())
             flingX = scroller.currX; flingY = scroller.currY
             postInvalidateOnAnimation()
         }
         c.drawColor(sea)
-        val hw = width / 2f / scale; val hh = height / 2f / scale
-        val vx0 = cx - hw; val vx1 = cx + hw; val vy0 = cy - hh; val vy1 = cy + hh
+        // visible world area: a circle around the centre covers the view at any bearing
+        val vr = hypot(width.toFloat(), height.toFloat()) / 2f / scale
+        val vx0 = cx - vr; val vx1 = cx + vr; val vy0 = cy - vr; val vy1 = cy + vr
         matrix.reset()
-        matrix.setTranslate(-cx, -cy); matrix.postScale(scale, -scale); matrix.postTranslate(width / 2f, height / 2f)
+        matrix.setTranslate(-cx, -cy); matrix.postRotate(rot)
+        matrix.postScale(scale, -scale); matrix.postTranslate(width / 2f, height / 2f)
         c.save(); c.concat(matrix)
         data?.let { d ->
             for (l in layers) {
@@ -381,7 +516,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             var i = 0
             while (i < a.size) {
                 pt[0] = a[i]; pt[1] = a[i + 1]; matrix.mapPoints(pt)
-                if (pt[0] in 0f..width.toFloat() && pt[1] in 0f..height.toFloat()) drawArrow(c, pt[0], pt[1], a[i + 2], 7 * dp)
+                if (pt[0] in 0f..width.toFloat() && pt[1] in 0f..height.toFloat()) drawArrow(c, pt[0], pt[1], a[i + 2] - rot, 7 * dp)
                 i += 3
             }
         }
@@ -440,7 +575,8 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
                 val hl = s.id == nextStopId || s.id == destinationStopId
                 val r = (if (hl) 7 else 4) * dp
-                s.heading?.let { h ->  // arrow pointing in the served direction of bus travel
+                s.heading?.let { hw ->  // arrow pointing in the served direction of bus travel
+                    val h = hw - rot   // compass bearing -> direction on the (rotated) screen
                     val br = Math.toRadians(h.toDouble())
                     val len = 3.4f * r
                     val tx = pt[0] + len * sin(br).toFloat(); val ty = pt[1] - len * cos(br).toFloat()
@@ -468,7 +604,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         me?.let { m ->
             pt[0] = m[0]; pt[1] = m[1]; matrix.mapPoints(pt)
             c.drawCircle(pt[0], pt[1], m[2] * scale, meAcc)
-            if (!m[3].isNaN()) { meFill.color = Color.rgb(238, 0, 0); drawArrow(c, pt[0], pt[1], m[3], 16 * dp) }
+            // your direction: the phone's heading in heading-up mode, else the GPS course
+            val dir = if (headingUp && !deviceHeading.isNaN()) deviceHeading else m[3]
+            if (!dir.isNaN()) { meFill.color = Color.rgb(238, 0, 0); drawArrow(c, pt[0], pt[1], dir - rot, 16 * dp) }
             meFill.color = Color.WHITE
             c.drawCircle(pt[0], pt[1], 8 * dp, meFill); c.drawCircle(pt[0], pt[1], 8 * dp, meRing)
         }
@@ -532,6 +670,13 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         private const val MIN_SCALE = 0.01f   // px per metre: whole islands
         private const val MAX_SCALE = 25f     // px per metre: street detail
         private const val TWO_TAP_MS = 300L   // two-finger tap must be quicker than this
+        private const val ROT_THRESHOLD = 12f // degrees of twist before the map starts to rotate
+        private const val HEADING_OFFSET = 0.2f // heading-up: you sit 20% of the height below centre
+
+        /** Angle in [0, 360). */
+        fun norm360(a: Float) = ((a % 360f) + 360f) % 360f
+        /** Signed smallest difference a - b, in (-180, 180]. */
+        fun angleDiff(a: Float, b: Float): Float { val d = norm360(a - b); return if (d > 180f) d - 360f else d }
         // stop names show from this zoom (lowered so they appear earlier); streets a bit later
         private const val STOP_LABEL_SCALE = 1.2f
         private const val STREET_LABEL_SCALE = 2.0f
