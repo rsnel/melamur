@@ -2,6 +2,7 @@ package it.snel.melamur.update
 
 import android.app.Activity
 import android.app.AlertDialog
+import it.snel.melamur.HcDialog
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -24,7 +25,7 @@ class UpdateFlow(private val act: Activity) {
 
     private fun ui(block: () -> Unit) = act.runOnUiThread { if (!act.isFinishing && !act.isDestroyed) block() }
     private fun alert(title: String, msg: String?) =
-        AlertDialog.Builder(act).setTitle(title).setMessage(msg ?: "").setPositiveButton(android.R.string.ok, null).show()
+        HcDialog(act).setTitle(title).setMessage(msg ?: "").setPositiveButton(android.R.string.ok, null).show()
 
     fun start() {
         Toast.makeText(act, "Checking for updates…", Toast.LENGTH_SHORT).show()
@@ -41,7 +42,7 @@ class UpdateFlow(private val act: Activity) {
     }
 
     private fun offer(a: Updater.Available) {
-        AlertDialog.Builder(act).setTitle("${a.title} is available")
+        HcDialog(act).setTitle("${a.title} is available")
             .setMessage("${a.details}\n\nInstalled: ${Updater.installedLabel()}")
             .setPositiveButton("Install") { _, _ -> proceed(a) }
             .setNegativeButton("Later", null).show()
@@ -50,7 +51,7 @@ class UpdateFlow(private val act: Activity) {
     private fun proceed(a: Updater.Available) {
         if (a.needsToken && token == null) { askToken(null) { proceed(a) }; return }
         if (!act.packageManager.canRequestPackageInstalls()) {
-            AlertDialog.Builder(act).setTitle("Allow installing updates")
+            HcDialog(act).setTitle("Allow installing updates")
                 .setMessage("Android asks once whether MelaMur may install apps. Turn it on, come back, and tap Check for updates again.")
                 .setPositiveButton("Open settings") { _, _ ->
                     act.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${act.packageName}")))
@@ -67,7 +68,7 @@ class UpdateFlow(private val act: Activity) {
         val box = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL; val p = (20 * d).toInt(); setPadding(p, p, p, p); addView(bar)
         }
-        val dlg = AlertDialog.Builder(act).setTitle("Downloading ${a.title}…").setView(box).setCancelable(false).show()
+        val dlg = HcDialog(act).setTitle("Downloading ${a.title}…").setView(box).setCancelable(false).show()
         Thread {
             try {
                 val apk = Updater.download(a, token, File(act.cacheDir, "update")) { done, total ->
@@ -101,7 +102,7 @@ class UpdateFlow(private val act: Activity) {
             })
             addView(input)
         }
-        val b = AlertDialog.Builder(act).setTitle("GitHub token").setView(box)
+        val b = HcDialog(act).setTitle("GitHub token").setView(box)
             .setPositiveButton("Save") { _, _ ->
                 val t = input.text.toString().trim()
                 if (t.isNotEmpty()) { token = t; onSaved() }

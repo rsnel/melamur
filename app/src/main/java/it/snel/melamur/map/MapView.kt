@@ -570,6 +570,8 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         debugPaint.setShadowLayer(3 * dp, 0f, 0f, pick(Color.WHITE, Color.BLACK))
         clusterFill.color = pick(red, Color.WHITE)
         clusterRing.color = pick(Color.WHITE, Color.BLACK)
+        lineStopFill.color = pick(Color.WHITE, Color.BLACK)
+        lineStopRing.color = pick(Color.rgb(20, 20, 20), Color.WHITE)
         clusterText.color = pick(Color.WHITE, Color.BLACK)
     }
     private val pt = FloatArray(2)
@@ -661,10 +663,16 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         // Stop names take priority: reserve their label cells first, so street and
         // place names only fill the grid cells left over.
         stopLabelCells.clear()
+        collectLineStops(vx0, vy0, vx1, vy1)
+        if (scale > LINE_STOP_LABEL_SCALE) for (m in lineMarks) {
+            if (m.sx < 0 || m.sx > width || m.sy < 0 || m.sy > height) continue
+            m.labelled = reserve(m.sx + 10 * dp, m.sy + 4 * dp)
+        }
         val showStopLabels = scale > STOP_LABEL_SCALE
         if (scale > MIN_STOP_SCALE && showStopLabels) {
             for (s in stops) {
                 if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue
+                if (s.id in lineStopIds) continue
                 pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
                 if (pt[0] < 0 || pt[0] > width || pt[1] < 0 || pt[1] > height) continue
                 val r = (if (s.id == nextStopId || s.id == destinationStopId) 7 else 4) * dp
@@ -713,6 +721,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         if (scale > MIN_STOP_SCALE) {
             for (s in stops) {
                 if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue
+                if (s.id in lineStopIds && s.id != selectedStopId && s.id != nextStopId && s.id != destinationStopId) continue
                 pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
                 val hl = s.id == nextStopId || s.id == destinationStopId || s.id == selectedStopId
                 val r = (if (hl) 7 else 4) * dp
@@ -731,6 +740,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             }
         }
         else drawClusters(c, vx0, vy0, vx1, vy1)
+        drawLineStops(c)
         for (p in pois) {
             if (p.x < vx0 || p.x > vx1 || p.y < vy0 || p.y > vy1) continue
             pt[0] = p.x; pt[1] = p.y; matrix.mapPoints(pt)
@@ -854,6 +864,67 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         return occupied.add(gx.toLong() * 100000L + gy)
     }
 
+    // ---------------- stops of the line on show: every stop clearly marked, with
+    // an arrow for the way the bus leaves it. A stop and its same-name partner in
+    // the other direction are drawn as one (no arrow) while they would overlap.
+    private class LineMark(var sx: Float, var sy: Float, val bearing: Float, val color: Int,
+                           val name: String, val ids: List<String>) { var labelled = false }
+    private val lineMarks = ArrayList<LineMark>()
+    private val lineStopIds = HashSet<String>()
+    private val lineStopFill = fill(Color.WHITE)
+    private val lineStopRing = stroke(Color.rgb(20, 20, 20)).apply { strokeWidth = 2.5f * dp }
+
+    private fun collectLineStops(vx0: Float, vy0: Float, vx1: Float, vy1: Float) {
+        lineMarks.clear(); lineStopIds.clear()
+        val pad = 60 * dp / scale
+        for (r in routes) {
+            if (activeRouteId != null && r.route.id != activeRouteId) continue
+            val ss = r.stops
+            val done = BooleanArray(ss.size)
+            for (i in ss.indices) {
+                if (done[i]) continue
+                val a = ss[i]
+                lineStopIds.add(a.id)
+                if (a.x < vx0 - pad || a.x > vx1 + pad || a.y < vy0 - pad || a.y > vy1 + pad) continue
+                pt[0] = a.x; pt[1] = a.y; matrix.mapPoints(pt)
+                val ax = pt[0]; val ay = pt[1]
+                val j = r.partner.getOrElse(i) { -1 }
+                if (j >= 0 && !done[j]) {
+                    val b = ss[j]
+                    pt[0] = b.x; pt[1] = b.y; matrix.mapPoints(pt)
+                    if (hypot(pt[0] - ax, pt[1] - ay) < PAIR_MERGE_DP * dp) {
+                        // one marker for both directions, between the two stops
+                        done[j] = true; lineStopIds.add(b.id)
+                        lineMarks += LineMark((ax + pt[0]) / 2, (ay + pt[1]) / 2, Float.NaN, a.color, a.name, listOf(a.id, b.id))
+                        done[i] = true
+                        continue
+                    }
+                }
+                done[i] = true
+                lineMarks += LineMark(ax, ay, a.bearing, a.color, a.name, listOf(a.id))
+            }
+        }
+    }
+
+    private fun drawLineStops(c: Canvas) {
+        for (m in lineMarks) {
+            if (m.sx < -20 * dp || m.sx > width + 20 * dp || m.sy < -20 * dp || m.sy > height + 20 * dp) continue
+            val pairR = 6.5f * dp; val oneR = 5f * dp
+            val r = if (m.bearing.isNaN()) pairR else oneR
+            if (!m.bearing.isNaN()) {
+                // departure arrow just outside the circle, in the line's colour
+                val h = m.bearing - rot
+                val br = Math.toRadians(h.toDouble())
+                val d = r + 7 * dp
+                arrowPaint.color = if (highContrast) Color.WHITE else m.color
+                drawArrow(c, m.sx + d * sin(br).toFloat(), m.sy - d * cos(br).toFloat(), h, 6 * dp)
+            }
+            c.drawCircle(m.sx, m.sy, r, lineStopFill); c.drawCircle(m.sx, m.sy, r, lineStopRing)
+            if (m.labelled || m.ids.any { it == selectedStopId })
+                c.drawText(m.name, m.sx + r + 4 * dp, m.sy + 4 * dp, label)
+        }
+    }
+
     // ---------------- stop clusters: zoomed out too far to show stops, nearby
     // stops are drawn as one circle with their count at their average position.
     // Clusters are built in world space per power-of-two zoom level, so they stay
@@ -865,7 +936,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val clusterFill = fill(Color.rgb(238, 0, 0))
     private val clusterRing = stroke(Color.WHITE).apply { strokeWidth = 2 * dp }
     private val clusterText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.WHITE; textAlign = Paint.Align.CENTER; isFakeBoldText = true
+        color = Color.WHITE; textAlign = Paint.Align.CENTER; isFakeBoldText = true; textSize = 10 * dp
     }
 
     private fun clustersFor(level: Int): List<Cluster> = clusterCache.getOrPut(level) {
@@ -895,13 +966,17 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         }
     }
 
-    private fun clusterRadius(n: Int) = (11 + 3.2f * kotlin.math.ln(n.toFloat()) / kotlin.math.ln(2f)).coerceAtMost(30f) * dp
+    /** Just big enough for the number: two digits fit comfortably, four barely. */
+    private fun clusterRadius(n: Int): Float {
+        val digits = maxOf(2, n.toString().length)
+        return clusterText.measureText("8".repeat(digits)) / 2 + 2.5f * dp
+    }
 
     private fun drawClusters(c: Canvas, vx0: Float, vy0: Float, vx1: Float, vy1: Float) {
         clusterScreen.clear()
         if (stops.isEmpty()) return
         // cell of ~72dp on screen, rounded to a power of two in world units
-        val level = kotlin.math.ceil(kotlin.math.ln((72 * dp / scale).toDouble()) / kotlin.math.ln(2.0)).toInt()
+        val level = kotlin.math.ceil(kotlin.math.ln((48 * dp / scale).toDouble()) / kotlin.math.ln(2.0)).toInt()
         val pad = 40 * dp / scale
         for (cl in clustersFor(level)) {
             if (cl.x < vx0 - pad || cl.x > vx1 + pad || cl.y < vy0 - pad || cl.y > vy1 + pad) continue
@@ -909,7 +984,6 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             val n = cl.stops.size
             val r = clusterRadius(n)
             c.drawCircle(pt[0], pt[1], r, clusterFill); c.drawCircle(pt[0], pt[1], r, clusterRing)
-            clusterText.textSize = (if (n >= 100) 11 else 13) * dp
             c.drawText(n.toString(), pt[0], pt[1] + clusterText.textSize * 0.36f, clusterText)
             clusterScreen.add(cl to floatArrayOf(pt[0], pt[1], r))
         }
@@ -928,6 +1002,8 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
 
     companion object {
         const val MIN_STOP_SCALE = 0.25f
+        private const val LINE_STOP_LABEL_SCALE = 0.35f
+        private const val PAIR_MERGE_DP = 26f   // closer than this on screen: draw the pair as one
         private const val MIN_SCALE = 0.01f   // px per metre: whole islands
         private const val MAX_SCALE = 25f     // px per metre: street detail
         private const val TWO_TAP_MS = 300L   // two-finger tap must be quicker than this

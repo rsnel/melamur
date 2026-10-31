@@ -277,7 +277,7 @@ class MainActivity : Activity(), LocationListener {
         }
     }
 
-    private val highContrast get() = prefs.getBoolean("high_contrast", false)
+    private val highContrast get() = HighContrast.on(this)
 
     /**
      * High contrast for bright sun: the map draws itself in black and white, and the
@@ -287,15 +287,7 @@ class MainActivity : Activity(), LocationListener {
     private fun applyHighContrast() {
         val hc = highContrast
         map.highContrast = hc
-        val root = window.decorView
-        if (hc) {
-            val cm = android.graphics.ColorMatrix().apply { setSaturation(0f) }
-            val k = 1.8f; val off = 128f * (1 - k)
-            cm.postConcat(android.graphics.ColorMatrix(floatArrayOf(
-                k, 0f, 0f, 0f, off, 0f, k, 0f, 0f, off, 0f, 0f, k, 0f, off, 0f, 0f, 0f, 1f, 0f)))
-            root.setLayerType(View.LAYER_TYPE_HARDWARE,
-                android.graphics.Paint().apply { colorFilter = android.graphics.ColorMatrixColorFilter(cm) })
-        } else root.setLayerType(View.LAYER_TYPE_NONE, null)
+        HighContrast.apply(this, window)
         refreshTabs()
     }
 
@@ -896,7 +888,7 @@ class MainActivity : Activity(), LocationListener {
 
     // ---------------- database import (SAF)
     private fun promptImport() {
-        AlertDialog.Builder(this).setTitle(R.string.db_pick_title).setMessage(R.string.db_pick_text)
+        HcDialog(this).setTitle(R.string.db_pick_title).setMessage(R.string.db_pick_text)
             .setPositiveButton(R.string.db_choose) { _, _ -> pickDatabase() }
             .setNegativeButton(R.string.close, null).show()
     }
@@ -985,7 +977,7 @@ class MainActivity : Activity(), LocationListener {
                     })
                 }
                 val place = Place(stop.display, stop.lat, stop.lon)
-                dlg = AlertDialog.Builder(this)
+                dlg = HcDialog(this)
                     .setTitle(stop.display + "  ·  #${stop.number}")
                     .setView(android.widget.ScrollView(this).apply { addView(box) })
                     .setPositiveButton(R.string.nav_from) { _, _ -> navFromMap(place, true) }
@@ -1044,16 +1036,16 @@ class MainActivity : Activity(), LocationListener {
         val place = Place(poi?.name ?: "Dropped pin", poi?.lat ?: lat, poi?.lon ?: lon)
         if (poi == null) {
             val items = arrayOf(getString(R.string.poi_store), getString(R.string.nav_from), getString(R.string.nav_to))
-            AlertDialog.Builder(this).setItems(items) { _, w ->
+            HcDialog(this).setItems(items) { _, w ->
                 when (w) { 0 -> storePoi(lat, lon); 1 -> navFromMap(place, true); 2 -> navFromMap(place, false) }
             }.show()
         } else {
             val items = arrayOf(getString(R.string.nav_from), getString(R.string.nav_to), getString(R.string.poi_delete))
-            AlertDialog.Builder(this).setTitle(poi.name).setItems(items) { _, w ->
+            HcDialog(this).setTitle(poi.name).setItems(items) { _, w ->
                 when (w) {
                     0 -> navFromMap(place, true)
                     1 -> navFromMap(place, false)
-                    2 -> AlertDialog.Builder(this).setMessage(R.string.poi_delete_confirm)
+                    2 -> HcDialog(this).setMessage(R.string.poi_delete_confirm)
                         .setPositiveButton(R.string.poi_delete) { _, _ ->
                             PoiStore.remove(this, poi.id); pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
                         }.setNegativeButton(R.string.close, null).show()
@@ -1083,7 +1075,7 @@ class MainActivity : Activity(), LocationListener {
 
     private fun storePoi(lat: Double, lon: Double) {
         val input = EditText(this).apply { hint = getString(R.string.poi_name); setTextColor(white); setHintTextColor(grey) }
-        AlertDialog.Builder(this).setTitle(R.string.poi_store).setView(input)
+        HcDialog(this).setTitle(R.string.poi_store).setView(input)
             .setPositiveButton(R.string.poi_store) { _, _ ->
                 val name = input.text.toString().ifBlank { "POI" }
                 PoiStore.add(this, name, lat, lon); pois = PoiStore.load(this); map.pois = pois; rebuildIndex()
@@ -1105,13 +1097,13 @@ class MainActivity : Activity(), LocationListener {
             getString(if (highContrast) R.string.menu_contrast_off else R.string.menu_contrast_on))
         if (Settings.debug(this)) items.add(getString(R.string.menu_debug))
         items.add(getString(R.string.privacy)); items.add(getString(R.string.menu_about))
-        AlertDialog.Builder(this).setItems(items.toTypedArray()) { _, w ->
+        HcDialog(this).setItems(items.toTypedArray()) { _, w ->
             when (items[w]) {
                 getString(R.string.menu_settings) -> openSettings()
                 getString(R.string.menu_reload) -> reloadMenu()
                 getString(R.string.menu_update) -> UpdateFlow(this).start()
                 getString(R.string.menu_contrast_on), getString(R.string.menu_contrast_off) -> {
-                    prefs.edit().putBoolean("high_contrast", !highContrast).apply(); applyHighContrast()
+                    HighContrast.set(this, !highContrast); applyHighContrast()
                 }
                 getString(R.string.menu_debug) -> lastItinerary?.let { startNavigation(it, simulate = true) } ?: toast(getString(R.string.sim_need))
                 getString(R.string.privacy) -> showConsent(false)
@@ -1188,7 +1180,7 @@ class MainActivity : Activity(), LocationListener {
     }
 
     private fun reloadMenu() {
-        AlertDialog.Builder(this).setTitle(R.string.menu_reload).setItems(
+        HcDialog(this).setTitle(R.string.menu_reload).setItems(
             arrayOf(getString(R.string.db_reopen), getString(R.string.db_import_new))
         ) { _, w ->
             if (w == 0) Thread { if (DbManager.reload(this)) loadData() }.start() else pickDatabase()
@@ -1199,7 +1191,7 @@ class MainActivity : Activity(), LocationListener {
         val extra = DbManager.db?.attribution()?.let { "\n\nDataset attribution:\n$it" } ?: ""
         val build = "\n\nInstalled: ${Updater.installedLabel()}" +
             BuildConfig.CI_SHA.take(7).let { if (it.isNotEmpty()) " ($it)" else "" }
-        AlertDialog.Builder(this).setTitle(R.string.about_title)
+        HcDialog(this).setTitle(R.string.about_title)
             .setMessage(getString(R.string.about_text) + extra + build)
             .setPositiveButton(R.string.close, null).show()
     }
@@ -1248,7 +1240,7 @@ class MainActivity : Activity(), LocationListener {
                 updateMapForMode(); refreshView(); confirmNavigate(itin)
             })
         }
-        dlg = AlertDialog.Builder(this).setTitle(R.string.planner_title)
+        dlg = HcDialog(this).setTitle(R.string.planner_title)
             .setView(android.widget.ScrollView(this).apply { addView(box) })
             .setNegativeButton(R.string.close, null).create()
         dlg.show()
@@ -1256,7 +1248,7 @@ class MainActivity : Activity(), LocationListener {
 
     private fun confirmNavigate(itin: Itinerary) {
         lastItinerary = itin
-        val b = AlertDialog.Builder(this).setTitle(R.string.navigate).setMessage(summary(itin))
+        val b = HcDialog(this).setTitle(R.string.navigate).setMessage(summary(itin))
             .setPositiveButton(R.string.navigate) { _, _ -> startNavigation(itin, simulate = false) }
             .setNegativeButton(R.string.close, null)
         if (Settings.debug(this)) b.setNeutralButton(R.string.simulate) { _, _ -> startNavigation(itin, simulate = true) }
@@ -1289,8 +1281,8 @@ class MainActivity : Activity(), LocationListener {
         DatePickerDialog(this, { _, y, mo, d ->
             TimePickerDialog(this, { _, h, mi ->
                 onPicked(LocalDateTime.of(y, mo + 1, d, h, mi))
-            }, now.hour, now.minute, true).show()
-        }, now.year, now.monthValue - 1, now.dayOfMonth).show()
+            }, now.hour, now.minute, true).let { HighContrast.dialog(it) }.show()
+        }, now.year, now.monthValue - 1, now.dayOfMonth).let { HighContrast.dialog(it) }.show()
     }
 
     // ---------------- navigation
@@ -1372,7 +1364,7 @@ class MainActivity : Activity(), LocationListener {
 
     // ---------------- consent (GDPR) — Wi-Fi crowd-GPS is disabled for now
     private fun showConsent(firstRun: Boolean) {
-        val b = AlertDialog.Builder(this).setTitle(R.string.consent_title).setMessage(R.string.consent_text)
+        val b = HcDialog(this).setTitle(R.string.consent_title).setMessage(R.string.consent_text)
             .setCancelable(!firstRun)
         if (hasConsent) {
             b.setPositiveButton(R.string.close, null)

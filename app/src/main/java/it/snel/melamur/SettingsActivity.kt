@@ -29,6 +29,7 @@ class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        HighContrast.apply(this, window)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(11, 11, 11))
             setPadding(px(20f), px(20f), px(20f), px(20f))

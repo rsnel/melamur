@@ -23,7 +23,15 @@ import kotlin.math.sin
  * one per diverging stretch.
  */
 class DirLine(val path: Path, val color: Int, val arrows: FloatArray /* x,y,bearing */, val branch: Boolean = false)
-class RouteGfx(val route: BusRoute, val lines: List<DirLine>)
+/** A stop the line calls at: where it is and which way the bus leaves it (NaN if unknown). */
+class LineStop(val id: String, val x: Float, val y: Float, val name: String, val bearing: Float, val color: Int)
+/**
+ * [stops] of every main direction; [partner] pairs a stop with the stop of the same name
+ * served in the other direction nearby (index into [stops], -1 if none), so the
+ * map can draw the pair as one when they would overlap.
+ */
+class RouteGfx(val route: BusRoute, val lines: List<DirLine>,
+               val stops: List<LineStop> = emptyList(), val partner: IntArray = IntArray(0))
 
 object RouteRenderer {
     private const val STEP = 10f          // sample spacing along a shape, metres
@@ -35,7 +43,7 @@ object RouteRenderer {
     private const val MIN_APART = 3       // ... and shorter gaps between shared bits are bridged
     private const val MIN_ARROW_RUN = 4   // samples: diverging stretches shorter than this get no arrow
 
-    fun build(route: BusRoute, @Suppress("UNUSED_PARAMETER") stops: Map<String, BusStop>): RouteGfx {
+    fun build(route: BusRoute, stops: Map<String, BusStop>): RouteGfx {
         val dirs = route.directions
         // samples per direction: x, y, bearing
         val samples = dirs.map { d ->
@@ -114,7 +122,41 @@ object RouteRenderer {
             }
             DirLine(path, d.color, arrows.toFloatArray(), branch = d.id.startsWith("v"))
         }
-        return RouteGfx(route, lines)
+        val (ls, partner) = lineStops(route, stops)
+        return RouteGfx(route, lines, ls, partner)
+    }
+
+    private const val PAIR = 250f   // same-name stops of both directions closer than this can pair
+
+    private fun lineStops(route: BusRoute, stops: Map<String, BusStop>): Pair<List<LineStop>, IntArray> {
+        val out = ArrayList<LineStop>(); val dirOf = ArrayList<Int>()
+        route.directions.forEachIndexed { di, d ->
+            var along = -1f
+            for (id in d.stopIds) {
+                val s = stops[id] ?: continue
+                // departure direction: the shape's bearing where the bus passes the stop
+                // (searching onwards from the previous stop, so loops come out right)
+                val p = d.shape.project(s.x, s.y, maxOf(-1f, along - 30f))?.takeIf { it.dist < 80f }
+                    ?: d.shape.project(s.x, s.y)?.takeIf { it.dist < 80f }
+                if (p != null) along = p.along
+                out += LineStop(id, s.x, s.y, s.name, p?.bearing ?: Float.NaN, d.color)
+                dirOf += di
+            }
+        }
+        // pair each stop with the nearest same-name stop of another direction
+        val partner = IntArray(out.size) { -1 }
+        val byName = out.indices.groupBy { out[it].name.trim().lowercase() }
+        for (g in byName.values) {
+            if (g.size < 2) continue
+            val cand = ArrayList<Triple<Float, Int, Int>>()
+            for (a in g) for (b in g) if (a < b && dirOf[a] != dirOf[b] && out[a].id != out[b].id) {
+                val dd = hypot(out[a].x - out[b].x, out[a].y - out[b].y)
+                if (dd < PAIR) cand += Triple(dd, a, b)
+            }
+            for ((_, a, b) in cand.sortedBy { it.first })
+                if (partner[a] < 0 && partner[b] < 0) { partner[a] = b; partner[b] = a }
+        }
+        return out to partner
     }
 
     /**
