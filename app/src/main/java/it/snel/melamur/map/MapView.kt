@@ -736,7 +736,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 }
                 stopFill.color = if (s.id == destinationStopId) accent else stopBase
                 c.drawCircle(pt[0], pt[1], r, stopFill); c.drawCircle(pt[0], pt[1], r, stopRing)
-                if (hl || s.id in stopLabelCells) c.drawText(s.name, pt[0] + r + 3 * dp, pt[1] + 4 * dp, label)
+                if (hl || s.id in stopLabelCells) c.drawText(s.mapName, pt[0] + r + 3 * dp, pt[1] + 4 * dp, label)
             }
         }
         else drawClusters(c, vx0, vy0, vx1, vy1)
@@ -895,13 +895,13 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                     if (hypot(pt[0] - ax, pt[1] - ay) < PAIR_MERGE_DP * dp) {
                         // one marker for both directions, between the two stops
                         done[j] = true; lineStopIds.add(b.id)
-                        lineMarks += LineMark((ax + pt[0]) / 2, (ay + pt[1]) / 2, Float.NaN, a.color, a.name, listOf(a.id, b.id))
+                        lineMarks += LineMark((ax + pt[0]) / 2, (ay + pt[1]) / 2, Float.NaN, a.color, a.label, listOf(a.id, b.id))
                         done[i] = true
                         continue
                     }
                 }
                 done[i] = true
-                lineMarks += LineMark(ax, ay, a.bearing, a.color, a.name, listOf(a.id))
+                lineMarks += LineMark(ax, ay, a.bearing, a.color, a.label, listOf(a.id))
             }
         }
     }

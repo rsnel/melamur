@@ -24,7 +24,8 @@ import kotlin.math.sin
  */
 class DirLine(val path: Path, val color: Int, val arrows: FloatArray /* x,y,bearing */, val branch: Boolean = false)
 /** A stop the line calls at: where it is and which way the bus leaves it (NaN if unknown). */
-class LineStop(val id: String, val x: Float, val y: Float, val name: String, val bearing: Float, val color: Int)
+class LineStop(val id: String, val x: Float, val y: Float, val name: String, val bearing: Float, val color: Int,
+               val label: String = name)
 /**
  * [stops] of every main direction; [partner] pairs a stop with the stop of the same name
  * served in the other direction nearby (index into [stops], -1 if none), so the
@@ -139,7 +140,7 @@ object RouteRenderer {
                 val p = d.shape.project(s.x, s.y, maxOf(-1f, along - 30f))?.takeIf { it.dist < 80f }
                     ?: d.shape.project(s.x, s.y)?.takeIf { it.dist < 80f }
                 if (p != null) along = p.along
-                out += LineStop(id, s.x, s.y, s.name, p?.bearing ?: Float.NaN, d.color)
+                out += LineStop(id, s.x, s.y, s.name, p?.bearing ?: Float.NaN, d.color, s.mapName)
                 dirOf += di
             }
         }

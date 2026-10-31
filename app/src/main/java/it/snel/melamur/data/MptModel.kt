@@ -23,11 +23,14 @@ data class Stop(
     val locality: String?,
     val lat: Double,
     val lon: Double,
+    /** MPT's short label (stop.short_name), for the map; null if the dataset has none. */
+    val shortName: String? = null,
 ) {
     val x = Geo.x(lon)
     val y = Geo.y(lat)
     val display: String get() = if (locality.isNullOrBlank()) name else "$locality - $name"
-    fun asBusStop() = BusStop(number.toString(), display, lat, lon, null, number.toString())
+    fun asBusStop() = BusStop(number.toString(), display, lat, lon, null, number.toString(),
+        shortName?.takeIf { it.isNotBlank() } ?: name)
 }
 
 /** A route/line that serves a stop (from v_stop_routes joined to route). */

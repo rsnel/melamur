@@ -60,10 +60,15 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         query("SELECT MIN(valid_from) FROM dataset_version", emptyArray()) { if (it.isNull(0)) null else it.getString(0) }.firstOrNull()
 
     fun allStops(v: Int): List<Stop> = query(
-        "SELECT stop_number,name,locality,lat,lon FROM stop " +
+        "SELECT stop_number,name,locality,lat,lon," + (if (hasStopShortName) "short_name" else "NULL") + " FROM stop " +
             "WHERE from_version<=? AND (to_version IS NULL OR to_version>?) AND lat IS NOT NULL AND lon IS NOT NULL",
         arrayOf("$v", "$v")
-    ) { Stop(it.getInt(0), it.getString(1) ?: "", it.getStringOrNull(2), it.getDouble(3), it.getDouble(4)) }
+    ) { Stop(it.getInt(0), it.getString(1) ?: "", it.getStringOrNull(2), it.getDouble(3), it.getDouble(4), it.getStringOrNull(5)) }
+
+    /** Older datasets have no stop.short_name. */
+    private val hasStopShortName: Boolean by lazy {
+        query("PRAGMA table_info(stop)", emptyArray()) { it.getString(1) }.any { it == "short_name" }
+    }
 
     /** Routes that serve [stopNumber], in their line colour (route_style, else route_shape). */
     fun linesForStop(stopNumber: Int, v: Int): List<Line> = linesForStopRaw(stopNumber, v).map { l ->

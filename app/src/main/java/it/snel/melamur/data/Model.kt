@@ -17,7 +17,10 @@ data class BusStop(
     val heading: Float?,
     /** Official Tallinja stop number when available (from the API/GTFS); null for OSM-only data. */
     val code: String? = null,
+    /** Short name for map labels (falls back to [name]). */
+    val short: String? = null,
 ) {
+    val mapName: String get() = short ?: name
     val x = Geo.x(lon)
     val y = Geo.y(lat)
 
