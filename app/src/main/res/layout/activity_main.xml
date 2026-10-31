@@ -140,6 +140,13 @@
                 android:textColor="@color/mm_white" android:textSize="24sp" />
         </LinearLayout>
 
+        <!-- line mode: zoom out to the whole line (offered, not done, when a line is picked on the map) -->
+        <Button android:id="@+id/lineFit" style="@style/MmButton"
+            android:layout_width="wrap_content" android:layout_height="44dp"
+            android:layout_gravity="center_horizontal|bottom" android:layout_marginBottom="20dp"
+            android:minWidth="0dp" android:paddingHorizontal="16dp"
+            android:text="@string/line_fit" android:visibility="gone" />
+
         <!-- center-me: sits bottom-right, just above the Map/Text/Misc bar; hidden in text mode -->
         <Button android:id="@+id/center"
             android:layout_width="56dp" android:layout_height="56dp"

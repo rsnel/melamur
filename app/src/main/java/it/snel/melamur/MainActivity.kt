@@ -109,6 +109,8 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var textPanel: android.widget.ScrollView
     private lateinit var textContent: LinearLayout
     private lateinit var centerBtn: Button
+    private lateinit var lineFitBtn: Button
+    private var lineBounds: FloatArray? = null       // LINE: world extent of the line on the map
     private lateinit var zoomBox: View
     private lateinit var compassBtn: ImageButton
     private lateinit var tabExplore: Button
@@ -146,6 +148,8 @@ class MainActivity : Activity(), LocationListener {
         findViewById<Button>(R.id.zoomIn).setOnClickListener { map.zoomBy(2f) }
         findViewById<Button>(R.id.zoomOut).setOnClickListener { map.zoomBy(0.5f) }
         centerBtn = findViewById(R.id.center)
+        lineFitBtn = findViewById(R.id.lineFit)
+        lineFitBtn.setOnClickListener { fitLine() }
         // center-me cycles as in Google Maps: go to me and follow -> heading-up -> north-up follow
         centerBtn.setOnClickListener {
             when {
@@ -189,7 +193,8 @@ class MainActivity : Activity(), LocationListener {
         map.onStopTapped = { bs ->
             stopFor(bs)?.let { if (mode == Mode.EXPLORE) selectStop(it, moveCamera = false) else showStop(it) }
         }
-        map.onChipTapped = { code -> if (mode == Mode.EXPLORE) selectLine(code, stopLineDirs[code] ?: 0) }
+        // a line picked from the stop's chips: show it but keep the view (the button offers the zoom)
+        map.onChipTapped = { code -> if (mode == Mode.EXPLORE) selectLine(code, stopLineDirs[code] ?: 0, fit = false) }
         map.onMapTapped = { lat, lon -> if (mode == Mode.EXPLORE) selectPoint(lat, lon) }
         map.onMapLongPress = { lat, lon, poi -> showLongPressMenu(lat, lon, poi) }
         destination.setOnClickListener { if (NavHub.snapshot.active || NavHub.snapshot.arrived) cancelNav() }
@@ -304,6 +309,7 @@ class MainActivity : Activity(), LocationListener {
         // center-me and zoom only make sense on the map
         centerBtn.visibility = if (viewKind == ViewKind.MAP) View.VISIBLE else View.GONE
         zoomBox.visibility = centerBtn.visibility
+        refreshLineFit()
         updateCompass()
         refreshNavBar()
     }
@@ -403,8 +409,15 @@ class MainActivity : Activity(), LocationListener {
         }
     }
 
+    private fun refreshLineFit() {
+        if (!::lineFitBtn.isInitialized) return
+        val show = mode == Mode.EXPLORE && sub == Sub.LINE && selectedLine != null && viewKind == ViewKind.MAP
+        lineFitBtn.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
     /** The explore selection changed: redraw the map and, if shown, the text. Never switches view. */
     private fun exploreChanged() {
+        refreshLineFit()
         if (mode == Mode.EXPLORE) {
             updateMapForMode()
             if (viewKind == ViewKind.TEXT) buildTextPanel()
@@ -425,9 +438,10 @@ class MainActivity : Activity(), LocationListener {
         exploreChanged()
     }
 
-    /** LINE mode for [code] in direction [dir]; the map zooms to the whole line. */
-    private fun selectLine(code: String, dir: Int = 0) {
-        sub = Sub.LINE; selectedLine = code; selectedDir = dir; pendingFit = true
+    /** LINE mode for [code] in direction [dir]; with [fit] the map zooms to the whole line. */
+    private fun selectLine(code: String, dir: Int = 0, fit: Boolean = true) {
+        if (code != selectedLine) lineBounds = null
+        sub = Sub.LINE; selectedLine = code; selectedDir = dir; pendingFit = fit
         lineTextTime = LocalDateTime.now(Malta.ZONE)
         exploreChanged()
     }
@@ -1018,14 +1032,18 @@ class MainActivity : Activity(), LocationListener {
             }
             runOnUiThread {
                 map.itinPaths = emptyList(); map.routes = listOf(gfx); map.activeRouteId = code; map.invalidate()
-                if (fit && x0 <= x1) {
-                    // keep the route clear of the overlays: zoom buttons (top-right),
-                    // center-me (bottom-right) and the scale bar (bottom-left)
-                    val d = resources.displayMetrics.density
-                    map.fitBounds(x0, y0, x1, y1, 24 * d, 24 * d, 76 * d, 88 * d)
-                }
+                if (x0 <= x1) lineBounds = floatArrayOf(x0, y0, x1, y1)
+                if (fit) fitLine()
             }
         }.start()
+    }
+
+    /** Zoom to the whole line on show, clear of the overlays: zoom buttons (top-right),
+     *  center-me (bottom-right), the scale bar (bottom-left) and the whole-line button. */
+    private fun fitLine() {
+        val b = lineBounds ?: return
+        val d = resources.displayMetrics.density
+        map.fitBounds(b[0], b[1], b[2], b[3], 24 * d, 24 * d, 76 * d, 88 * d)
     }
 
     // ---------------- long-press POI menu
