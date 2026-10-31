@@ -74,6 +74,28 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     fun setSearchPin(lat: Double, lon: Double) { searchPt = floatArrayOf(Geo.x(lon), Geo.y(lat)); invalidate() }
     fun clearSearchPin() { if (searchPt != null) { searchPt = null; invalidate() } }
     var onStopTapped: ((BusStop) -> Unit)? = null
+    /** A tap on the map that hit no stop, chip or callout. */
+    var onMapTapped: ((lat: Double, lon: Double) -> Unit)? = null
+    /** A tap on a line chip in the stop callout. */
+    var onChipTapped: ((code: String) -> Unit)? = null
+    /** Explore stop mode: the selected stop is drawn highlighted with its name. */
+    var selectedStopId: String? = null
+        set(v) { field = v; invalidate() }
+    /** One-line debug overlay at the top of the map (null = none). */
+    var debugText: String? = null
+        set(v) { if (field != v) { field = v; invalidate() } }
+
+    /** A line number chip in the stop callout, in the line's colours. */
+    class Chip(val code: String, val color: Int, val textColor: Int)
+    private var calloutX = 0f
+    private var calloutY = 0f
+    private var calloutChips: List<Chip>? = null
+    private class ChipHit(val code: String, val r: android.graphics.RectF)
+    private val chipHits = ArrayList<ChipHit>()
+    private val calloutRect = android.graphics.RectF()
+    /** Show the lines serving the stop at world position (x, y) as chips above it. */
+    fun setStopCallout(x: Float, y: Float, chips: List<Chip>) { calloutX = x; calloutY = y; calloutChips = chips; invalidate() }
+    fun clearStopCallout() { if (calloutChips != null) { calloutChips = null; chipHits.clear(); calloutRect.setEmpty(); invalidate() } }
     /** Long-press on the map: reports the world position and the POI hit, if any. */
     var onMapLongPress: ((lat: Double, lon: Double, poi: Poi?) -> Unit)? = null
     /** Tracking changed: [follow] = the map follows you; [headingUp] = and turns with your heading. */
@@ -325,11 +347,15 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             return true
         }
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            // the stop callout is on top: a chip selects its line; the rest of the panel does nothing
+            chipHits.firstOrNull { it.r.contains(e.x, e.y) }?.let { onChipTapped?.invoke(it.code); return true }
+            if (calloutRect.contains(e.x, e.y)) return true
             val w = toWorld(e.x, e.y); val wx = w[0]; val wy = w[1]
             val r = 24 * dp / scale
-            stops.minByOrNull { hypot(it.x - wx, it.y - wy) }
+            val stop = stops.minByOrNull { hypot(it.x - wx, it.y - wy) }
                 ?.takeIf { hypot(it.x - wx, it.y - wy) < r && scale > MIN_STOP_SCALE }
-                ?.let { onStopTapped?.invoke(it) }
+            if (stop != null) onStopTapped?.invoke(stop)
+            else onMapTapped?.invoke(Geo.lat(wy).toDouble(), Geo.lon(wx).toDouble())
             return true
         }
         override fun onLongPress(e: MotionEvent) {
@@ -475,6 +501,17 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         setShadowLayer(3 * dp, 0f, 0f, Color.WHITE)
     }
     private val scalePath = Path()
+    // stop callout and debug overlay
+    private val calloutBg = fill(Color.argb(240, 255, 255, 255))
+    private val calloutEdge = stroke(Color.rgb(150, 150, 150)).apply { strokeWidth = 1 * dp }
+    private val chipFill = fill(Color.GRAY)
+    private val chipText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 13 * dp; isFakeBoldText = true; textAlign = Paint.Align.CENTER
+    }
+    private val debugPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(30, 30, 30); textSize = 11 * dp; textAlign = Paint.Align.CENTER
+        setShadowLayer(3 * dp, 0f, 0f, Color.WHITE)
+    }
     private val occupied = HashSet<Long>() // label collision grid, rebuilt per frame
     private val stopLabelCells = HashSet<String>() // stops whose name won a slot this frame
     private val meFill = fill(Color.WHITE)
@@ -594,7 +631,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             for (s in stops) {
                 if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue
                 pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
-                val hl = s.id == nextStopId || s.id == destinationStopId
+                val hl = s.id == nextStopId || s.id == destinationStopId || s.id == selectedStopId
                 val r = (if (hl) 7 else 4) * dp
                 s.heading?.let { hw ->  // arrow pointing in the served direction of bus travel
                     val h = hw - rot   // compass bearing -> direction on the (rotated) screen
@@ -631,7 +668,50 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             meFill.color = Color.WHITE
             c.drawCircle(pt[0], pt[1], 8 * dp, meFill); c.drawCircle(pt[0], pt[1], 8 * dp, meRing)
         }
+        drawCallout(c)
         drawScaleBar(c)
+        debugText?.let { c.drawText(it, width / 2f, 22 * dp, debugPaint) }
+    }
+
+    /** Stop mode: the stop's lines as chips in their colours, on a panel above the stop. */
+    private fun drawCallout(c: Canvas) {
+        chipHits.clear(); calloutRect.setEmpty()
+        val chips = calloutChips ?: return
+        if (chips.isEmpty()) return
+        pt[0] = calloutX; pt[1] = calloutY; matrix.mapPoints(pt)
+        val sx = pt[0]; val sy = pt[1]
+        if (sx < 0 || sx > width || sy < 0 || sy > height) return
+        val h = 26 * dp; val padX = 8 * dp; val gap = 5 * dp; val pad = 7 * dp; val maxW = width * 0.8f
+        // lay the chips out in rows no wider than maxW
+        val rows = ArrayList<ArrayList<Pair<Chip, Float>>>()
+        var row = ArrayList<Pair<Chip, Float>>(); var rowW = 0f
+        for (ch in chips) {
+            val w = maxOf(h, chipText.measureText(ch.code) + 2 * padX)
+            if (row.isNotEmpty() && rowW + gap + w > maxW) { rows.add(row); row = ArrayList(); rowW = 0f }
+            rowW += (if (row.isEmpty()) 0f else gap) + w; row.add(ch to w)
+        }
+        rows.add(row)
+        fun widthOf(r: List<Pair<Chip, Float>>) = r.sumOf { it.second.toDouble() }.toFloat() + gap * (r.size - 1)
+        val blockW = rows.maxOf { widthOf(it) }
+        val blockH = rows.size * h + (rows.size - 1) * gap
+        var top = sy - 16 * dp - blockH - pad            // above the stop ...
+        if (top < pad + 30 * dp) top = sy + 16 * dp + pad  // ... or below it near the top edge
+        val left = (sx - blockW / 2).coerceIn(2 * pad, maxOf(2 * pad, width - blockW - 2 * pad))
+        calloutRect.set(left - pad, top - pad, left + blockW + pad, top + blockH + pad)
+        c.drawRoundRect(calloutRect, 9 * dp, 9 * dp, calloutBg); c.drawRoundRect(calloutRect, 9 * dp, 9 * dp, calloutEdge)
+        var y = top
+        for (r in rows) {
+            var x = left + (blockW - widthOf(r)) / 2
+            for ((ch, w) in r) {
+                val rect = android.graphics.RectF(x, y, x + w, y + h)
+                chipFill.color = ch.color; c.drawRoundRect(rect, 5 * dp, 5 * dp, chipFill)
+                chipText.color = ch.textColor
+                c.drawText(ch.code, x + w / 2, y + h / 2 + chipText.textSize * 0.36f, chipText)
+                chipHits.add(ChipHit(ch.code, rect))
+                x += w + gap
+            }
+            y += h + gap
+        }
     }
 
     /** Scale bar: the largest 1/2/5 x 10^n metres that fits in ~110 dp. */
