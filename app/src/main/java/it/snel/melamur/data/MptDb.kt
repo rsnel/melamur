@@ -142,6 +142,81 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         return out
     }
 
+    // ---- route variants (several versions of a line in one direction); absent in older datasets
+    private val hasVariants: Boolean by lazy {
+        query("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('route_variant','trip_variant')",
+            emptyArray()) { it.getInt(0) }.firstOrNull() == 2
+    }
+
+    /** All variants of a line valid in [v] (both directions); empty for datasets without variants. */
+    fun variants(code: String, v: Int): List<Variant> = if (!hasVariants) emptyList() else query(
+        "SELECT id, route_code, direction_index, variant, name, description, origin, destination, via, express, " +
+            "headsign, polyline, main FROM route_variant " +
+            "WHERE route_code=? AND from_version<=? AND (to_version IS NULL OR to_version>?) ORDER BY direction_index, variant",
+        arrayOf(code, "$v", "$v")
+    ) {
+        Variant(it.getLong(0), it.getString(1), if (it.isNull(2)) null else it.getInt(2), it.getStringOrNull(3) ?: "",
+            it.getStringOrNull(4), it.getStringOrNull(5), it.getStringOrNull(6), it.getStringOrNull(7),
+            it.getStringOrNull(8), !it.isNull(9) && it.getInt(9) != 0, it.getStringOrNull(10),
+            it.getStringOrNull(11), !it.isNull(12) && it.getInt(12) != 0)
+    }
+
+    /** Which variant each trip runs (trip.id -> route_variant.id); trips without a match are absent. */
+    fun tripVariants(tripIds: Collection<Long>): Map<Long, Long> {
+        if (!hasVariants || tripIds.isEmpty()) return emptyMap()
+        val out = HashMap<Long, Long>()
+        for (chunk in tripIds.distinct().chunked(500)) {
+            val qs = chunk.joinToString(",") { "?" }
+            query("SELECT trip_id, variant_id FROM trip_variant WHERE trip_id IN ($qs)",
+                chunk.map { it.toString() }.toTypedArray()) { it.getLong(0) to it.getLong(1) }
+                .forEach { (t, vid) -> out[t] = vid }
+        }
+        return out
+    }
+
+    /** A line's variants and, per variant, a short label of how it differs from its siblings. */
+    class LineVariants(val byId: Map<Long, Variant>, private val labels: Map<Long, String>) {
+        fun label(variantId: Long?): String = variantId?.let { labels[it] }.orEmpty()
+        /** The distinct labels of one direction, e.g. ["from Marsaskala", "from Bianco, via Universita"]. */
+        fun labelsFor(dir: Int): List<String> =
+            byId.values.filter { it.directionIndex == dir }.mapNotNull { labels[it.id]?.takeIf { l -> l.isNotEmpty() } }.distinct()
+    }
+    private val variantCache = HashMap<String, LineVariants>()
+    fun lineVariants(code: String, v: Int): LineVariants = synchronized(variantCache) {
+        variantCache.getOrPut("$code/$v") {
+            val vs = variants(code, v)
+            LineVariants(vs.associateBy { it.id }, variantLabels(vs, variantStopNames(vs.map { it.id })))
+        }
+    }
+
+    /** Stop names of each variant in driving order (route_variant_stop), for telling variants apart. */
+    private fun variantStopNames(ids: List<Long>): Map<Long, List<String>> {
+        if (ids.isEmpty()) return emptyMap()
+        val present = query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_variant_stop'", emptyArray()) { 1 }
+        if (present.isEmpty()) return emptyMap()
+        val out = HashMap<Long, ArrayList<String>>()
+        query("SELECT variant_id, name FROM route_variant_stop WHERE variant_id IN (${ids.joinToString(",") { "?" }}) " +
+            "ORDER BY variant_id, seq", ids.map { it.toString() }.toTypedArray()) { it.getLong(0) to (it.getStringOrNull(1) ?: "") }
+            .forEach { (id, n) -> if (n.isNotEmpty()) out.getOrPut(id) { ArrayList() }.add(n) }
+        return out
+    }
+
+    /** A variant's own geometry, or null if it has none. */
+    fun variantShape(x: Variant): Polyline? = x.polyline?.takeIf { it.isNotEmpty() }?.let { poly ->
+        val pts = TallinjaApi.decodePolyline(poly)
+        val xs = FloatArray(pts.size / 2); val ys = FloatArray(pts.size / 2)
+        for (k in xs.indices) { xs[k] = pts[2 * k]; ys[k] = pts[2 * k + 1] }
+        if (xs.size >= 2) Polyline(xs, ys) else null
+    }
+
+    /** All trips of a line in one direction on [date], by their first time: every variant, wherever it starts. */
+    fun tripsOf(code: String, dir: Int, date: LocalDate, v: Int): List<Pair<Long, Int>> = query(
+        "SELECT tr.id, tr.first_minute FROM timetable tt JOIN trip tr ON tr.timetable_id=tt.id " +
+            "WHERE tt.route_code=? AND tt.direction_index=? AND tt.from_version<=? " +
+            "AND (tt.to_version IS NULL OR tt.to_version>?) AND (tt.weekdays & ?)<>0 ORDER BY tr.first_minute",
+        arrayOf(code, "$dir", "$v", "$v", "${Malta.weekdayBit(date)}")
+    ) { it.getLong(0) to it.getInt(1) }
+
     /** All routes valid in version [v], with name and (direction-0) colour. */
     fun allLines(v: Int): List<Line> = query(
         "SELECT code, name FROM route WHERE from_version<=? AND (to_version IS NULL OR to_version>?) ORDER BY code",
@@ -254,6 +329,48 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
 
         private val FALLBACK = intArrayOf(0xFF1F77B4.toInt(), 0xFFFF7F0E.toInt(), 0xFF2CA02C.toInt(),
             0xFF9467BD.toInt(), 0xFF8C564B.toInt(), 0xFFE377C2.toInt(), 0xFF17BECF.toInt())
+
+        /**
+         * How each variant differs from the others in the same direction, briefly:
+         * only the fields that are not the same for all of them ("from Marsaskala",
+         * "via Universita", "to Mater Dei", "express"). Empty for a direction with
+         * one variant, and for the plain variant when the others add something.
+         * Variants that still look alike are told apart by their stops (a stop only
+         * that variant serves: "via X"; one it leaves out: "skips X"), else by
+         * their own description. [stops]: variant id -> its stop names in order.
+         */
+        fun variantLabels(vs: List<Variant>, stops: Map<Long, List<String>> = emptyMap()): Map<Long, String> {
+            val out = HashMap<Long, String>()
+            fun norm(s: String?) = s?.trim()?.lowercase().orEmpty()
+            fun clean(s: String?) = s?.trim()?.takeIf { it.isNotEmpty() }
+            for ((_, group) in vs.groupBy { it.directionIndex }) {
+                if (group.size < 2) continue
+                fun differs(f: (Variant) -> String?) = group.map { norm(f(it)) }.toSet().size > 1
+                val dFrom = differs { it.origin }; val dVia = differs { it.via }; val dTo = differs { it.destination }
+                val dExpress = group.map { it.express }.toSet().size > 1
+                for (x in group) {
+                    val parts = ArrayList<String>()
+                    if (dFrom) clean(x.origin)?.let { parts += "from $it" }
+                    if (dVia) clean(x.via)?.let { parts += "via $it" }
+                    if (dTo) clean(x.destination)?.let { parts += "to $it" }
+                    if (dExpress && x.express) parts += "express"
+                    out[x.id] = parts.joinToString(", ")
+                }
+                for ((_, same) in group.groupBy { out[it.id] }) if (same.size > 1) {
+                    val resolved = same.associate { x ->
+                        val mine = stops[x.id].orEmpty()
+                        val others = same.filter { it !== x }.flatMap { stops[it.id].orEmpty() }
+                        val otherKeys = others.map { norm(it) }.toSet(); val mineKeys = mine.map { norm(it) }.toSet()
+                        val only = mine.firstOrNull { norm(it) !in otherKeys }
+                        val skips = others.firstOrNull { norm(it) !in mineKeys }
+                        x.id to (only?.let { "via $it" } ?: skips?.let { "skips $it" }
+                            ?: clean(x.description) ?: clean(x.name) ?: "variant ${x.variant}")
+                    }
+                    for (x in same) out[x.id] = listOfNotNull(out[x.id]?.takeIf { it.isNotEmpty() }, resolved[x.id]).joinToString(", ")
+                }
+            }
+            return out
+        }
 
         /** "#RRGGBB" (route_style) -> colour, or null if absent/invalid. */
         fun hexColor(s: String?): Int? = s?.trim()?.takeIf { it.isNotEmpty() }?.let {

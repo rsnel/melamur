@@ -411,6 +411,7 @@ class MainActivity : Activity(), LocationListener {
         Thread {
             val v = db.versionFor(itin.serviceDate)
             val byNum = allStops.associateBy { it.number }
+            val tripVar = db.tripVariants(itin.busLegs.map { it.tripId })
             val shapeCache = HashMap<String, Polyline?>()
             fun shapeFor(code: String, dir: Int): Polyline? = shapeCache.getOrPut("$code/$dir") {
                 db.directionsForRoute(code, v).firstOrNull { it.directionIndex == dir }?.shape
@@ -430,7 +431,9 @@ class MainActivity : Activity(), LocationListener {
                 }
                 is BusLeg -> {
                     val p = Path()
-                    val shape = shapeFor(leg.routeCode, leg.directionIndex)
+                    // the geometry of the variant this trip runs, else the direction's main route
+                    val variant = tripVar[leg.tripId]?.let { db.lineVariants(leg.routeCode, v).byId[it] }
+                    val shape = variant?.let { db.variantShape(it) } ?: shapeFor(leg.routeCode, leg.directionIndex)
                     val b = byNum[leg.boardNumber]; val a = byNum[leg.alightNumber]
                     if (shape != null && b != null && a != null) {
                         val b0 = shape.project(b.x, b.y)?.along
@@ -524,24 +527,28 @@ class MainActivity : Activity(), LocationListener {
         Thread {
             val v = db.versionFor(lineTextTime.toLocalDate())
             val dirs = db.directionsForRoute(code, v)
-            val dir = dirs.getOrNull(selectedDir) ?: dirs.firstOrNull()
-            val firstStop = dir?.stopNumbers?.firstOrNull()?.toIntOrNull()
+            val dir = dirs.firstOrNull { it.directionIndex == selectedDir } ?: dirs.firstOrNull()
+            val di = dir?.directionIndex ?: selectedDir
             val nowMin = lineTextTime.hour * 60 + lineTextTime.minute
-            val deps = if (firstStop != null) db.departures(firstStop, lineTextTime.toLocalDate(), v)
-                .filter { it.routeCode == code && it.directionIndex == (dir?.directionIndex ?: 0) }.sortedBy { it.minutes }
-            else emptyList()
-            val trip = deps.firstOrNull { it.minutes >= nowMin } ?: deps.lastOrNull()
-            val stops = trip?.let { db.tripStops(it.tripId) } ?: emptyList()
+            // every trip in this direction, whichever variant (start stop) it runs
+            val trips = db.tripsOf(code, di, lineTextTime.toLocalDate(), v)
+            var idx = trips.indexOfFirst { it.second >= nowMin }; if (idx < 0) idx = trips.size - 1
+            val trip = trips.getOrNull(idx); val nextTrip = trips.getOrNull(idx + 1)
+            val stops = trip?.let { db.tripStops(it.first) } ?: emptyList()
             val col = dir?.color ?: db.routeColor(code, v)
             val byNum = allStops.associateBy { it.number }
-            val tripIdx = deps.indexOfFirst { it.tripId == trip?.tripId }
-            val nextTrip = if (tripIdx >= 0) deps.getOrNull(tripIdx + 1) else null
-            val gap = if (trip != null && nextTrip != null) nextTrip.minutes - trip.minutes else null
+            val gap = if (trip != null && nextTrip != null) nextTrip.second - trip.second else null
+            // variants: how this trip differs from the line's other versions in this direction
+            val lv = db.lineVariants(code, v)
+            val variants = lv.labelsFor(di)
+            val thisTrip = trip?.let { lv.label(db.tripVariants(listOf(it.first))[it.first]) }.orEmpty()
             runOnUiThread {
                 if (gen != textGen) return@runOnUiThread
                 textContent.addView(tv("$code  →  ${dir?.name ?: ""}", col, 18f, true))
+                if (variants.size > 1) textContent.addView(tv("${variants.size} variants: ${variants.joinToString("  ·  ")}", grey, 13f))
                 val headway = gap?.let { "   ·   next bus in $it min" } ?: if (trip != null) "   ·   last trip" else ""
-                textContent.addView(tv("Trip departing ${trip?.let { Malta.hhmm(it.minutes) } ?: "—"}$headway", grey, 13f))
+                textContent.addView(tv("Trip departing ${trip?.let { Malta.hhmm(it.second) } ?: "—"}$headway", grey, 13f))
+                if (thisTrip.isNotEmpty()) textContent.addView(tv("This trip: $thisTrip", white, 14f, true))
                 for (s in stops) {
                     val stop = s.number?.let { byNum[it] }
                     val nm = stop?.display ?: s.name
@@ -611,13 +618,17 @@ class MainActivity : Activity(), LocationListener {
             val now = LocalDateTime.now(Malta.ZONE)
             val v = db.versionFor(now.toLocalDate())
             val lines = db.linesForStop(stop.number, v)
-            // first two upcoming departures per line + direction
+            // first two upcoming departures per line + direction + variant
+            val deps = db.departuresFrom(stop.number, now, 400)
+            val tripVar = db.tripVariants(deps.map { it.tripId })
             val per = LinkedHashMap<String, MutableList<Departure>>()
-            for (d in db.departuresFrom(stop.number, now, 400)) {
-                val l = per.getOrPut("${d.routeCode}/${d.directionIndex}") { ArrayList() }
+            for (d in deps) {
+                val l = per.getOrPut("${d.routeCode}/${d.directionIndex}/${tripVar[d.tripId] ?: -1}") { ArrayList() }
                 if (l.size < 2) l.add(d)
             }
-            val rows = per.values.sortedWith(compareBy({ codeKey(it[0].routeCode) }, { it[0].routeCode }, { it[0].directionIndex }))
+            val rows = per.values.sortedWith(compareBy({ codeKey(it[0].routeCode) }, { it[0].routeCode },
+                { it[0].directionIndex }, { it[0].time }))
+            val variantLabel = rows.associate { r -> r[0].tripId to db.lineVariants(r[0].routeCode, v).label(tripVar[r[0].tripId]) }
             val served = rows.map { it[0].routeCode }.toSet()
             val idle = lines.filter { it.code !in served }.sortedWith(compareBy({ codeKey(it.code) }, { it.code }))
             runOnUiThread {
@@ -627,8 +638,9 @@ class MainActivity : Activity(), LocationListener {
                     val mins = java.time.Duration.between(now, a.time).toMinutes()
                     val next = "${Malta.hhmm(a.minutes)} (${if (mins <= 0) "now" else "in $mins min"})"
                     val then = b?.let { "  ·  then ${Malta.hhmm(it.minutes)}" } ?: "  ·  last today"
+                    val vl = variantLabel[a.tripId].orEmpty().let { if (it.isEmpty()) "" else "  ·  $it" }
                     textContent.addView(clickRow(listOf(lineColors(a.routeCode, white)),
-                        "${a.routeCode}  →  ${a.towards}", next + then) { selectLine(a.routeCode, a.directionIndex) })
+                        "${a.routeCode}  →  ${a.towards}$vl", next + then) { selectLine(a.routeCode, a.directionIndex) })
                 }
                 for (l in idle) textContent.addView(clickRow(listOf(lineColors(l.code, l.color)), l.code,
                     "no more departures today") { selectLine(l.code, 0) })
@@ -641,15 +653,14 @@ class MainActivity : Activity(), LocationListener {
         val db = DbManager.db ?: return; val code = selectedLine ?: return
         Thread {
             val v = db.versionFor(lineTextTime.toLocalDate())
-            val d = db.directionsForRoute(code, v).getOrNull(selectedDir) ?: return@Thread
-            val firstStop = d.stopNumbers.firstOrNull()?.toIntOrNull() ?: return@Thread
-            val deps = db.departures(firstStop, lineTextTime.toLocalDate(), v)
-                .filter { it.routeCode == code && it.directionIndex == d.directionIndex }.sortedBy { it.minutes }
-            if (deps.isEmpty()) return@Thread
+            val dirs = db.directionsForRoute(code, v)
+            val di = (dirs.firstOrNull { it.directionIndex == selectedDir } ?: dirs.firstOrNull())?.directionIndex ?: selectedDir
+            val trips = db.tripsOf(code, di, lineTextTime.toLocalDate(), v)   // all variants
+            if (trips.isEmpty()) return@Thread
             val nowMin = lineTextTime.hour * 60 + lineTextTime.minute
-            var idx = deps.indexOfFirst { it.minutes >= nowMin }; if (idx < 0) idx = deps.size - 1
-            val target = deps.getOrNull((idx + step).coerceIn(0, deps.size - 1)) ?: return@Thread
-            lineTextTime = Malta.at(lineTextTime.toLocalDate(), target.minutes)
+            var idx = trips.indexOfFirst { it.second >= nowMin }; if (idx < 0) idx = trips.size - 1
+            val target = trips[(idx + step).coerceIn(0, trips.size - 1)]
+            lineTextTime = Malta.at(lineTextTime.toLocalDate(), target.second)
             runOnUiThread { buildTextPanel() }
         }.start()
     }
@@ -692,8 +703,12 @@ class MainActivity : Activity(), LocationListener {
                 textContent.addView(tv("Walk $m m to ${leg.toName}", white, 15f))
             }
             is BusLeg -> {
+                // which version of the line this bus is, if the line has several in this direction
+                val vl = DbManager.db?.let { db ->
+                    db.lineVariants(leg.routeCode, db.versionFor(leg.serviceDate)).label(db.tripVariants(listOf(leg.tripId))[leg.tripId])
+                }.orEmpty().let { if (it.isEmpty()) "" else "  ·  $it" }
                 textContent.addView(clickRow(listOf(lineColors(leg.routeCode, leg.color)),
-                    "${Malta.hhmm(leg.boardMinutes)}  ${leg.routeCode} → ${leg.towards}",
+                    "${Malta.hhmm(leg.boardMinutes)}  ${leg.routeCode} → ${leg.towards}$vl",
                     "${leg.fromName}  →  ${leg.toName}  (${Malta.hhmm(leg.alightMinutes)})") {})
                 mids[leg.tripId]?.forEach { s ->
                     val nm = s.number?.let { byNum[it]?.display } ?: s.name
@@ -912,9 +927,15 @@ class MainActivity : Activity(), LocationListener {
             val v = db.versionFor(LocalDate.now(Malta.ZONE))
             val dirs = db.directionsForRoute(code, v)
             if (dirs.isEmpty()) return@Thread
+            // the main route of each direction, plus the other variants' own geometry (branches)
+            val branches = db.variants(code, v).filter { !it.main }.mapNotNull { x ->
+                val shape = db.variantShape(x) ?: return@mapNotNull null
+                val color = dirs.firstOrNull { it.directionIndex == x.directionIndex }?.color ?: dirs.first().color
+                RouteDirection("v${x.id}", x.description ?: x.name ?: "", shape, emptyList(), color)
+            }
             val route = BusRoute(code, code, dirs.first().color, dirs.map {
                 RouteDirection(it.directionIndex.toString(), it.name, it.shape, it.stopNumbers, it.color)
-            })
+            } + branches)
             val gfx = RouteRenderer.build(route, busStopsById)
             // extent of all directions' shapes
             var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE

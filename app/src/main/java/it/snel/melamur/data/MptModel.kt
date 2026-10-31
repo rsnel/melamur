@@ -65,6 +65,16 @@ data class DirectionShape(
     val stopNumbers: List<String>,
 )
 
+/**
+ * One variant of a line in one direction (route_variant): e.g. 204 to Mater Dei
+ * from Marsaskala, or from Bianco via Universita. Trips say which one they run.
+ */
+data class Variant(
+    val id: Long, val routeCode: String, val directionIndex: Int?, val variant: String,
+    val name: String?, val description: String?, val origin: String?, val destination: String?,
+    val via: String?, val express: Boolean, val headsign: String?, val polyline: String?, val main: Boolean,
+)
+
 /** A stop on a trip (for "next stop" / planner). */
 data class TripStop(val seq: Int, val number: Int?, val name: String, val minutes: Int)
 

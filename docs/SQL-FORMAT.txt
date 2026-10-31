@@ -255,6 +255,44 @@ route_style                             not versioned, key: route_code
     Filled by mpt_tallinja.py; kept when new versions are imported.
     A route without a row here has no known colour.
 
+route_variant                           [versioned, key: pattern_id]
+    One VARIANT of a route in one direction, from the Tallinja pattern
+    files (mpt_patterns.py).  A direction can have several, e.g. 204
+    towards Mater Dei: from Marsaskala, or from Bianco via Industrijali
+    or via Universita.  The website timetable merges them into one stop
+    list per direction; trip_variant says which variant each trip drives.
+    id, route_code, direction_index (the WEBSITE direction it belongs to;
+    | NULL if unclear), pattern_id ("1089:204:1:03"), otp_direction
+    (Tallinja's own 1/0, NOT the website's), variant ("03"), name,
+    description, origin, destination, via | NULL, express (0/1),
+    headsign (most common), reverse_pattern_id, polyline (its own
+    geometry, precision 5, driving order | NULL), length_m, stop_count,
+    trip_count (Tallinja trips), main (1 = the variant whose geometry is
+    used as direction.polyline), queried_at, content_hash, from_version,
+    to_version
+
+route_variant_stop                       child of route_variant
+    seq (driving order), stop_number, name, lat, lon, distance_m and
+    departure_bearing (along the variant's own polyline), timetable_seq
+    (the matching seq in the website timetable of that direction | NULL)
+
+route_variant_trip                       child of route_variant
+    otp_trip_id ("1089:TTH_2040022_0442"), service_id ("1089:TTH",
+    "1089:FRI", "1089:SAT", ...), headsign.  These are Tallinja's trip
+    ids (no times); they do not correspond 1:1 to website trips.
+
+trip_variant                             trip -> variant
+    trip_id (trip.id), variant_id, match ("exact": the trip serves exactly
+    the variant's stops; "similar": at least 80 % alike).  Trips without
+    a row match no known variant.
+
+    The geometry and stops of the bus you are on:
+        SELECT rv.polyline, rv.via, rv.destination
+        FROM trip_variant tv JOIN route_variant rv ON rv.id = tv.variant_id
+        WHERE tv.trip_id = :trip;
+        SELECT seq, stop_number, name, lat, lon, distance_m
+        FROM route_variant_stop WHERE variant_id = :variant ORDER BY seq;
+
 view v_stop_routes (stop_number, route_code, from_version, to_version)
     which routes serve a stop; apply VALID() with the timetable's
     versions as for a versioned table.
