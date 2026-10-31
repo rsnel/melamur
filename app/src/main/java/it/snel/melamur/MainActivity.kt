@@ -111,6 +111,9 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var centerBtn: Button
     private lateinit var lineFitBtn: Button
     private var lineBounds: FloatArray? = null       // LINE: world extent of the line on the map
+    // "Show whole line" is offered when the line appears on the map (picked, or back from
+    // text) and withdrawn for good once the view roughly shows the whole line
+    private var lineFitOffered = false
     private lateinit var zoomBox: View
     private lateinit var compassBtn: ImageButton
     private lateinit var tabExplore: Button
@@ -150,6 +153,8 @@ class MainActivity : Activity(), LocationListener {
         centerBtn = findViewById(R.id.center)
         lineFitBtn = findViewById(R.id.lineFit)
         lineFitBtn.setOnClickListener { fitLine() }
+        // withdraw the offer as soon as the view shows the whole line (zoomed by hand or by us)
+        map.onCameraDrawn = { if (lineFitOffered && lineFitBtn.visibility == View.VISIBLE) map.post { refreshLineFit() } }
         // center-me cycles as in Google Maps: go to me and follow -> heading-up -> north-up follow
         centerBtn.setOnClickListener {
             when {
@@ -230,7 +235,10 @@ class MainActivity : Activity(), LocationListener {
 
     // ---------------- modes (Explore/Navigate) × views (Map/Text)
     private fun setMode(m: Mode) { mode = m; hideSearch(); updateMapForMode(); refreshView(); updateDebug() }
-    private fun setView(v: ViewKind) { viewKind = v; hideSearch(); refreshView(); updateDebug() }
+    private fun setView(v: ViewKind) {
+        if (v == ViewKind.MAP && viewKind != ViewKind.MAP) lineFitOffered = true
+        viewKind = v; hideSearch(); refreshView(); updateDebug()
+    }
 
     /**
      * Map <-> text by pulling from either edge (two views, so both sides toggle).
@@ -411,8 +419,16 @@ class MainActivity : Activity(), LocationListener {
 
     private fun refreshLineFit() {
         if (!::lineFitBtn.isInitialized) return
-        val show = mode == Mode.EXPLORE && sub == Sub.LINE && selectedLine != null && viewKind == ViewKind.MAP
-        lineFitBtn.visibility = if (show) View.VISIBLE else View.GONE
+        val onMap = mode == Mode.EXPLORE && sub == Sub.LINE && selectedLine != null && viewKind == ViewKind.MAP
+        val b = lineBounds
+        if (onMap && lineFitOffered && b != null) {
+            val d = resources.displayMetrics.density
+            if (map.isApproxFit(b[0], b[1], b[2], b[3], 24 * d, 24 * d, 76 * d, 88 * d)) lineFitOffered = false
+        }
+        // lineBounds may still be loading: keep the offer, show the button once known
+        val show = onMap && lineFitOffered && b != null
+        val vis = if (show) View.VISIBLE else View.GONE
+        if (lineFitBtn.visibility != vis) lineFitBtn.visibility = vis
     }
 
     /** The explore selection changed: redraw the map and, if shown, the text. Never switches view. */
@@ -442,6 +458,7 @@ class MainActivity : Activity(), LocationListener {
     private fun selectLine(code: String, dir: Int = 0, fit: Boolean = true) {
         if (code != selectedLine) lineBounds = null
         sub = Sub.LINE; selectedLine = code; selectedDir = dir; pendingFit = fit
+        lineFitOffered = true
         lineTextTime = LocalDateTime.now(Malta.ZONE)
         exploreChanged()
     }
@@ -1033,7 +1050,7 @@ class MainActivity : Activity(), LocationListener {
             runOnUiThread {
                 map.itinPaths = emptyList(); map.routes = listOf(gfx); map.activeRouteId = code; map.invalidate()
                 if (x0 <= x1) lineBounds = floatArrayOf(x0, y0, x1, y1)
-                if (fit) fitLine()
+                if (fit) fitLine() else refreshLineFit()
             }
         }.start()
     }
@@ -1042,6 +1059,7 @@ class MainActivity : Activity(), LocationListener {
      *  center-me (bottom-right), the scale bar (bottom-left) and the whole-line button. */
     private fun fitLine() {
         val b = lineBounds ?: return
+        lineFitOffered = false; refreshLineFit()
         val d = resources.displayMetrics.density
         map.fitBounds(b[0], b[1], b[2], b[3], 24 * d, 24 * d, 76 * d, 88 * d)
     }

@@ -289,6 +289,31 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         animateCamera(mx - (u * c + v * s), my - (-u * s + v * c), ts)
     }
 
+    /** Called after every frame (the camera may have moved); keep it cheap. */
+    var onCameraDrawn: (() -> Unit)? = null
+
+    /**
+     * Whether the view roughly shows what [fitBounds] would for this box: the zoom
+     * within a factor of about 1.5 of it, and the box's centre near the centre of
+     * the free area.
+     */
+    fun isApproxFit(x0: Float, y0: Float, x1: Float, y1: Float, padL: Float, padT: Float, padR: Float, padB: Float): Boolean {
+        if (width == 0 || height == 0) return false
+        val aw = (width - padL - padR).coerceAtLeast(1f); val ah = (height - padT - padB).coerceAtLeast(1f)
+        val mx = (x0 + x1) / 2f; val my = (y0 + y1) / 2f
+        val c = cosR(); val s = sinR()
+        var bw = 1f; var bh = 1f
+        for ((px, py) in listOf(x0 to y0, x1 to y0, x0 to y1, x1 to y1)) {
+            val dx = px - mx; val dy = py - my
+            bw = maxOf(bw, 2 * kotlin.math.abs(dx * c - dy * s)); bh = maxOf(bh, 2 * kotlin.math.abs(dx * s + dy * c))
+        }
+        val ts = min(aw / bw, ah / bh).coerceIn(MIN_SCALE, MAX_SCALE)
+        if (scale > ts * 1.3f || scale < ts / 1.6f) return false
+        pt[0] = mx; pt[1] = my; matrix.mapPoints(pt)
+        val fx = padL + aw / 2f; val fy = padT + ah / 2f
+        return kotlin.math.abs(pt[0] - fx) < aw * 0.2f && kotlin.math.abs(pt[1] - fy) < ah * 0.2f
+    }
+
     /** Zoom by [f] around the screen centre (or you, while following), animated. */
     fun zoomBy(f: Float) = animateZoomAt(width / 2f, focusY(height / 2f), f)
 
@@ -774,6 +799,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         drawCallout(c)
         drawScaleBar(c)
         debugText?.let { c.drawText(it, width / 2f, 22 * dp, debugPaint) }
+        onCameraDrawn?.invoke()
     }
 
     /** Stop mode: the stop's lines as chips in their colours, on a panel above the stop. */
