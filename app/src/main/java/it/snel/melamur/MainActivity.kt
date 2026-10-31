@@ -219,6 +219,7 @@ class MainActivity : Activity(), LocationListener {
             promptImport()
         }
         requestLocationPerms()
+        applyHighContrast()
         refreshView()
     }
 
@@ -276,9 +277,35 @@ class MainActivity : Activity(), LocationListener {
         }
     }
 
+    private val highContrast get() = prefs.getBoolean("high_contrast", false)
+
+    /**
+     * High contrast for bright sun: the map draws itself in black and white, and the
+     * rest of the window is shown in grey with the contrast pushed towards pure
+     * black and white (line colours become shades, their numbers stay readable).
+     */
+    private fun applyHighContrast() {
+        val hc = highContrast
+        map.highContrast = hc
+        val root = window.decorView
+        if (hc) {
+            val cm = android.graphics.ColorMatrix().apply { setSaturation(0f) }
+            val k = 1.8f; val off = 128f * (1 - k)
+            cm.postConcat(android.graphics.ColorMatrix(floatArrayOf(
+                k, 0f, 0f, 0f, off, 0f, k, 0f, 0f, off, 0f, 0f, k, 0f, off, 0f, 0f, 0f, 1f, 0f)))
+            root.setLayerType(View.LAYER_TYPE_HARDWARE,
+                android.graphics.Paint().apply { colorFilter = android.graphics.ColorMatrixColorFilter(cm) })
+        } else root.setLayerType(View.LAYER_TYPE_NONE, null)
+        refreshTabs()
+    }
+
     private fun refreshTabs() {
-        tabExplore.backgroundTintList = ColorStateList.valueOf(if (mode == Mode.EXPLORE) tabOn else tabOff)
-        tabNavigate.backgroundTintList = ColorStateList.valueOf(if (mode == Mode.NAVIGATE) tabOn else tabOff)
+        // high contrast: the chosen mode is white with black text, the other black with white text
+        val on = if (highContrast) Color.WHITE else tabOn
+        for ((b, sel) in listOf(tabExplore to (mode == Mode.EXPLORE), tabNavigate to (mode == Mode.NAVIGATE))) {
+            b.backgroundTintList = ColorStateList.valueOf(if (sel) on else tabOff)
+            b.setTextColor(if (sel && highContrast) Color.BLACK else Color.WHITE)
+        }
         // the edge handles show the view a pull would bring in
         val other = if (viewKind == ViewKind.MAP) R.drawable.ic_text else R.drawable.ic_map
         edgeLeft.setImageResource(other); edgeRight.setImageResource(other)
@@ -1074,7 +1101,8 @@ class MainActivity : Activity(), LocationListener {
     // ---------------- burger menu
     private fun showMisc() {
         val items = arrayListOf(getString(R.string.menu_settings), getString(R.string.menu_reload),
-            getString(R.string.menu_update))
+            getString(R.string.menu_update),
+            getString(if (highContrast) R.string.menu_contrast_off else R.string.menu_contrast_on))
         if (Settings.debug(this)) items.add(getString(R.string.menu_debug))
         items.add(getString(R.string.privacy)); items.add(getString(R.string.menu_about))
         AlertDialog.Builder(this).setItems(items.toTypedArray()) { _, w ->
@@ -1082,6 +1110,9 @@ class MainActivity : Activity(), LocationListener {
                 getString(R.string.menu_settings) -> openSettings()
                 getString(R.string.menu_reload) -> reloadMenu()
                 getString(R.string.menu_update) -> UpdateFlow(this).start()
+                getString(R.string.menu_contrast_on), getString(R.string.menu_contrast_off) -> {
+                    prefs.edit().putBoolean("high_contrast", !highContrast).apply(); applyHighContrast()
+                }
                 getString(R.string.menu_debug) -> lastItinerary?.let { startNavigation(it, simulate = true) } ?: toast(getString(R.string.sim_need))
                 getString(R.string.privacy) -> showConsent(false)
                 getString(R.string.menu_about) -> showAbout()

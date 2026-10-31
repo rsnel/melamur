@@ -435,7 +435,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     // normal light map: blue water, grey-green land, pastel roads — so the red
     // stop rings and the coloured bus lines stay clearly visible on top
     private val sea = Color.rgb(160, 200, 224)
-    private class Layer(val style: Int, val paint: Paint, val widthPx: Float, val widthM: Float, val minScale: Float)
+    private class Layer(val style: Int, val paint: Paint, val widthPx: Float, val widthM: Float, val minScale: Float) {
+        val normal = paint.color
+    }
     private val layers = listOf(
         Layer(MapData.LAND, fill(Color.rgb(223, 227, 214)), 0f, 0f, 0f),
         Layer(MapData.FARM, fill(Color.rgb(231, 229, 210)), 0f, 0f, 0.05f),
@@ -522,6 +524,54 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val meRing = stroke(Color.rgb(238, 0, 0)).apply { strokeWidth = 4 * dp }
     private val meAcc = fill(Color.argb(50, 238, 0, 0))
     private val matrix = Matrix()
+
+    // ---------------- high contrast: black and white only, for bright sunlight
+    private val hcCoast = stroke(Color.WHITE)
+    private val hcRoad = stroke(Color.WHITE)
+    private val hcFoot = stroke(Color.WHITE).apply { strokeCap = Paint.Cap.BUTT }
+    private val hcCasing = stroke(Color.BLACK)
+    private val pinDot = fill(Color.WHITE)
+    private val arrowEdge = stroke(Color.BLACK).apply { strokeWidth = 1.5f * dp }
+    private var accent = Color.rgb(238, 0, 0)   // stop rings, destination, your direction
+    private var stopBase = Color.WHITE
+
+    var highContrast = false
+        set(v) { field = v; applyPalette(); invalidate() }
+
+    private fun applyPalette() {
+        val hc = highContrast
+        fun pick(normal: Int, bw: Int) = if (hc) bw else normal
+        val red = Color.rgb(238, 0, 0)
+        accent = pick(red, Color.WHITE)
+        stopBase = pick(Color.WHITE, Color.BLACK)
+        stopRing.color = pick(red, Color.WHITE)
+        meRing.color = pick(red, Color.WHITE)
+        meAcc.color = pick(Color.argb(50, 238, 0, 0), Color.argb(70, 255, 255, 255))
+        itinWalkPaint.color = pick(Color.rgb(60, 60, 60), Color.WHITE)
+        landmarkDot.color = pick(landmarkColor, Color.WHITE)
+        landmarkRing.color = pick(Color.WHITE, Color.BLACK)
+        landmarkPaint.color = pick(landmarkColor, Color.WHITE)
+        landmarkPaint.setShadowLayer(3 * dp, 0f, 0f, pick(Color.WHITE, Color.BLACK))
+        poiFill.color = pick(Color.rgb(255, 193, 7), Color.WHITE)
+        poiStroke.color = pick(Color.WHITE, Color.BLACK)
+        poiLabel.color = pick(Color.rgb(255, 193, 7), Color.WHITE)
+        startFill.color = pick(Color.rgb(46, 160, 67), Color.BLACK)
+        searchFill.color = pick(Color.rgb(33, 118, 243), Color.WHITE)
+        searchRing.color = pick(Color.WHITE, Color.BLACK)
+        flagPole.color = pick(Color.rgb(20, 20, 20), Color.WHITE)
+        flagOutline.color = pick(Color.rgb(20, 20, 20), Color.WHITE)
+        scaleHalo.color = pick(Color.WHITE, Color.BLACK)
+        scaleLine.color = pick(Color.rgb(30, 30, 30), Color.WHITE)
+        scaleText.color = pick(Color.rgb(30, 30, 30), Color.WHITE)
+        scaleText.setShadowLayer(3 * dp, 0f, 0f, pick(Color.WHITE, Color.BLACK))
+        calloutBg.color = pick(Color.argb(240, 255, 255, 255), Color.BLACK)
+        calloutEdge.color = pick(Color.rgb(150, 150, 150), Color.WHITE)
+        debugPaint.color = pick(Color.rgb(30, 30, 30), Color.WHITE)
+        debugPaint.setShadowLayer(3 * dp, 0f, 0f, pick(Color.WHITE, Color.BLACK))
+        clusterFill.color = pick(red, Color.WHITE)
+        clusterRing.color = pick(Color.WHITE, Color.BLACK)
+        clusterText.color = pick(Color.WHITE, Color.BLACK)
+    }
     private val pt = FloatArray(2)
     private val arrow = Path()
 
@@ -532,7 +582,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             flingX = scroller.currX; flingY = scroller.currY
             postInvalidateOnAnimation()
         }
-        c.drawColor(sea)
+        c.drawColor(if (highContrast) Color.BLACK else sea)
         // visible world area: a circle around the centre covers the view at any bearing
         val vr = hypot(width.toFloat(), height.toFloat()) / 2f / scale
         val vx0 = cx - vr; val vx1 = cx + vr; val vy0 = cy - vr; val vy1 = cy + vr
@@ -543,15 +593,41 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         data?.let { d ->
             for (l in layers) {
                 if (scale < l.minScale) continue
-                if (l.paint.style == Paint.Style.STROKE)
+                var paint = l.paint
+                if (highContrast) {
+                    // black and white: coastline, thin white streets, dotted footpaths; no fills
+                    paint = when (l.style) {
+                        MapData.LAND -> hcCoast.apply { strokeWidth = 1.5f * dp / scale }
+                        MapData.FOOT -> hcFoot.apply {
+                            strokeWidth = 1f * dp / scale
+                            pathEffect = DashPathEffect(floatArrayOf(1.5f * dp / scale, 4 * dp / scale), 0f)
+                        }
+                        MapData.SERVICE, MapData.MINOR -> hcRoad.apply { strokeWidth = 0.8f * dp / scale }
+                        MapData.TERTIARY, MapData.SECONDARY -> hcRoad.apply { strokeWidth = 1.3f * dp / scale }
+                        MapData.PRIMARY, MapData.TRUNK -> hcRoad.apply { strokeWidth = 2f * dp / scale }
+                        else -> continue
+                    }
+                } else if (l.paint.style == Paint.Style.STROKE)
                     l.paint.strokeWidth = maxOf(l.widthPx * dp, l.widthM * scale) / scale
                 for (b in d.buckets[l.style] ?: continue)
-                    if (b.maxX >= vx0 && b.minX <= vx1 && b.maxY >= vy0 && b.minY <= vy1) c.drawPath(b.path, l.paint)
+                    if (b.maxX >= vx0 && b.minX <= vx1 && b.maxY >= vy0 && b.minY <= vy1) c.drawPath(b.path, paint)
             }
         }
         for (r in routes) {
             val active = activeRouteId == null || r.route.id == activeRouteId
             for (dl in r.lines) {
+                if (highContrast) {
+                    // white on a black casing so the line stands out from the white streets;
+                    // variant branches dashed
+                    val w = (if (active) 4f else 2.5f) * dp / scale
+                    hcCasing.strokeWidth = w + 4 * dp / scale
+                    c.drawPath(dl.path, hcCasing)
+                    routePaint.color = Color.WHITE; routePaint.alpha = 255; routePaint.strokeWidth = w
+                    routePaint.pathEffect = if (dl.branch) DashPathEffect(floatArrayOf(6 * dp / scale, 5 * dp / scale), 0f) else null
+                    c.drawPath(dl.path, routePaint)
+                    routePaint.pathEffect = null
+                    continue
+                }
                 routePaint.color = dl.color
                 routePaint.alpha = if (active) 255 else 90
                 routePaint.strokeWidth = (if (active) 4f else 2.5f) * dp / scale
@@ -562,7 +638,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
 
         // direction arrows along each route line (screen space)
         for (r in routes) for (dl in r.lines) {
-            arrowPaint.color = dl.color
+            arrowPaint.color = if (highContrast) Color.WHITE else dl.color
             val a = dl.arrows
             var i = 0
             while (i < a.size) {
@@ -574,8 +650,11 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         // planned-journey overlay (screen space so stroke width and dots stay constant)
         for (ip in itinPaths) {
             itinPathScreen.set(ip.path); itinPathScreen.transform(matrix)
-            if (ip.walk) c.drawPath(itinPathScreen, itinWalkPaint)
-            else { itinBusPaint.color = ip.color; c.drawPath(itinPathScreen, itinBusPaint) }
+            if (highContrast) {
+                hcCasing.strokeWidth = (if (ip.walk) 7 else 10) * dp; c.drawPath(itinPathScreen, hcCasing)
+                itinBusPaint.color = Color.WHITE
+            } else itinBusPaint.color = ip.color
+            c.drawPath(itinPathScreen, if (ip.walk) itinWalkPaint else itinBusPaint)
         }
         // ---- text labels (screen space, collision-avoided)
         occupied.clear()
@@ -643,10 +722,10 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                     val len = 3.4f * r
                     val tx = pt[0] + len * sin(br).toFloat(); val ty = pt[1] - len * cos(br).toFloat()
                     c.drawLine(pt[0], pt[1], tx, ty, stopRing)
-                    arrowPaint.color = Color.rgb(238, 0, 0)
+                    arrowPaint.color = accent
                     drawArrow(c, tx, ty, h, (if (hl) 7 else 5) * dp)
                 }
-                stopFill.color = if (s.id == destinationStopId) Color.rgb(238, 0, 0) else Color.WHITE
+                stopFill.color = if (s.id == destinationStopId) accent else stopBase
                 c.drawCircle(pt[0], pt[1], r, stopFill); c.drawCircle(pt[0], pt[1], r, stopRing)
                 if (hl || s.id in stopLabelCells) c.drawText(s.name, pt[0] + r + 3 * dp, pt[1] + 4 * dp, label)
             }
@@ -669,8 +748,8 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             c.drawCircle(pt[0], pt[1], m[2] * scale, meAcc)
             // your direction: the phone's heading in heading-up mode, else the GPS course
             val dir = if (headingUp && !deviceHeading.isNaN()) deviceHeading else m[3]
-            if (!dir.isNaN()) { meFill.color = Color.rgb(238, 0, 0); drawArrow(c, pt[0], pt[1], dir - rot, 16 * dp) }
-            meFill.color = Color.WHITE
+            if (!dir.isNaN()) { meFill.color = accent; drawArrow(c, pt[0], pt[1], dir - rot, 16 * dp) }
+            meFill.color = if (highContrast) Color.BLACK else Color.WHITE
             c.drawCircle(pt[0], pt[1], 8 * dp, meFill); c.drawCircle(pt[0], pt[1], 8 * dp, meRing)
         }
         drawCallout(c)
@@ -709,8 +788,10 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             var x = left + (blockW - widthOf(r)) / 2
             for ((ch, w) in r) {
                 val rect = android.graphics.RectF(x, y, x + w, y + h)
-                chipFill.color = ch.color; c.drawRoundRect(rect, 5 * dp, 5 * dp, chipFill)
-                chipText.color = ch.textColor
+                chipFill.color = if (highContrast) Color.BLACK else ch.color
+                c.drawRoundRect(rect, 5 * dp, 5 * dp, chipFill)
+                if (highContrast) c.drawRoundRect(rect, 5 * dp, 5 * dp, calloutEdge)
+                chipText.color = if (highContrast) Color.WHITE else ch.textColor
                 c.drawText(ch.code, x + w / 2, y + h / 2 + chipText.textSize * 0.36f, chipText)
                 chipHits.add(ChipHit(ch.code, rect))
                 x += w + gap
@@ -741,7 +822,8 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         pin.addCircle(x, cyc, r, Path.Direction.CW)
         pin.moveTo(x - r * 0.62f, cyc + r * 0.6f); pin.lineTo(x, y); pin.lineTo(x + r * 0.62f, cyc + r * 0.6f); pin.close()
         c.drawPath(pin, fillP); c.drawPath(pin, ringP)
-        c.drawCircle(x, cyc, r * 0.4f, checkerLight)
+        pinDot.color = ringP.color   // centre dot in the ring colour: white, or black on a white pin
+        c.drawCircle(x, cyc, r * 0.4f, pinDot)
     }
     private fun drawStartPin(c: Canvas, x: Float, y: Float) = drawPin(c, x, y, startFill, startRing, 9 * dp)
 
@@ -762,6 +844,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         arrow.reset(); arrow.moveTo(0f, -size); arrow.lineTo(size * 0.7f, size * 0.6f)
         arrow.lineTo(0f, size * 0.2f); arrow.lineTo(-size * 0.7f, size * 0.6f); arrow.close()
         c.drawPath(arrow, if (size > 10 * dp) meFill else arrowPaint)
+        if (highContrast) c.drawPath(arrow, arrowEdge)
         c.restore()
     }
 
