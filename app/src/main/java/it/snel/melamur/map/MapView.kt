@@ -38,7 +38,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     var data: MapData? = null
         set(v) { field = v; invalidate() }
     var stops: List<BusStop> = emptyList()
-        set(v) { field = v; invalidate() }
+        set(v) { field = v; clusterCache.clear(); invalidate() }
     var routes: List<RouteGfx> = emptyList()
         set(v) { field = v; invalidate() }
     /** A planned-journey overlay leg: a path in projected (world) coords. */
@@ -270,8 +270,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
      * minus the given screen paddings (px), e.g. to keep it clear of overlay
      * buttons. Keeps the current bearing; leaves follow mode.
      */
-    fun fitBounds(x0: Float, y0: Float, x1: Float, y1: Float, padL: Float, padT: Float, padR: Float, padB: Float) {
-        if (width == 0 || height == 0) { post { fitBounds(x0, y0, x1, y1, padL, padT, padR, padB) }; return }
+    fun fitBounds(x0: Float, y0: Float, x1: Float, y1: Float, padL: Float, padT: Float, padR: Float, padB: Float,
+                  minS: Float = MIN_SCALE, maxS: Float = MAX_SCALE) {
+        if (width == 0 || height == 0) { post { fitBounds(x0, y0, x1, y1, padL, padT, padR, padB, minS, maxS) }; return }
         val aw = (width - padL - padR).coerceAtLeast(1f); val ah = (height - padT - padB).coerceAtLeast(1f)
         // the box's extent as seen on the (possibly rotated) screen
         val mx = (x0 + x1) / 2f; val my = (y0 + y1) / 2f
@@ -281,7 +282,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             val dx = px - mx; val dy = py - my
             bw = maxOf(bw, 2 * kotlin.math.abs(dx * c - dy * s)); bh = maxOf(bh, 2 * kotlin.math.abs(dx * s + dy * c))
         }
-        val ts = min(aw / bw, ah / bh).coerceIn(MIN_SCALE, MAX_SCALE)
+        val ts = min(aw / bw, ah / bh).coerceIn(minS, maxS).coerceIn(MIN_SCALE, MAX_SCALE)
         // put the box centre at the centre of the free area
         val u = (padL + aw / 2f - width / 2f) / ts; val v = -(padT + ah / 2f - height / 2f) / ts
         follow = false
@@ -352,6 +353,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             if (calloutRect.contains(e.x, e.y)) return true
             val w = toWorld(e.x, e.y); val wx = w[0]; val wy = w[1]
             val r = 24 * dp / scale
+            if (scale <= MIN_STOP_SCALE) {
+                clusterHit(e.x, e.y)?.let { zoomToCluster(it); return true }
+            }
             val stop = stops.minByOrNull { hypot(it.x - wx, it.y - wy) }
                 ?.takeIf { hypot(it.x - wx, it.y - wy) < r && scale > MIN_STOP_SCALE }
             if (stop != null) onStopTapped?.invoke(stop)
@@ -647,6 +651,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 if (hl || s.id in stopLabelCells) c.drawText(s.name, pt[0] + r + 3 * dp, pt[1] + 4 * dp, label)
             }
         }
+        else drawClusters(c, vx0, vy0, vx1, vy1)
         for (p in pois) {
             if (p.x < vx0 || p.x > vx1 || p.y < vy0 || p.y > vy1) continue
             pt[0] = p.x; pt[1] = p.y; matrix.mapPoints(pt)
@@ -764,6 +769,78 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private fun reserve(x: Float, y: Float): Boolean {
         val gx = (x / (72 * dp)).toInt(); val gy = (y / (18 * dp)).toInt()
         return occupied.add(gx.toLong() * 100000L + gy)
+    }
+
+    // ---------------- stop clusters: zoomed out too far to show stops, nearby
+    // stops are drawn as one circle with their count at their average position.
+    // Clusters are built in world space per power-of-two zoom level, so they stay
+    // put while panning and only regroup when the zoom crosses a level.
+    class Cluster(val x: Float, val y: Float, val stops: List<BusStop>,
+                  val x0: Float, val y0: Float, val x1: Float, val y1: Float)
+    private val clusterCache = HashMap<Int, List<Cluster>>()
+    private val clusterScreen = ArrayList<Pair<Cluster, FloatArray>>()   // last drawn: cluster, (x, y, r)
+    private val clusterFill = fill(Color.rgb(238, 0, 0))
+    private val clusterRing = stroke(Color.WHITE).apply { strokeWidth = 2 * dp }
+    private val clusterText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textAlign = Paint.Align.CENTER; isFakeBoldText = true
+    }
+
+    private fun clustersFor(level: Int): List<Cluster> = clusterCache.getOrPut(level) {
+        val cell = Math.pow(2.0, level.toDouble()).toFloat()
+        // 1) grid buckets of `cell` world units
+        val buckets = HashMap<Long, MutableList<BusStop>>()
+        for (st in stops) {
+            val k = (Math.floor((st.x / cell).toDouble()).toLong() shl 32) xor (Math.floor((st.y / cell).toDouble()).toLong() and 0xffffffffL)
+            buckets.getOrPut(k) { ArrayList() }.add(st)
+        }
+        // 2) merge buckets whose centres ended up closer than one cell (no overlapping circles),
+        //    biggest first so small groups join the big ones near them
+        val groups = buckets.values.map { it.toMutableList() }.sortedByDescending { it.size }.toMutableList()
+        fun cx(g: List<BusStop>) = g.sumOf { it.x.toDouble() }.toFloat() / g.size
+        fun cy(g: List<BusStop>) = g.sumOf { it.y.toDouble() }.toFloat() / g.size
+        val out = ArrayList<MutableList<BusStop>>()
+        val centres = ArrayList<FloatArray>()
+        for (g in groups) {
+            val gx = cx(g); val gy = cy(g)
+            val j = centres.indexOfFirst { hypot(it[0] - gx, it[1] - gy) < cell }
+            if (j >= 0) { out[j].addAll(g); centres[j] = floatArrayOf(cx(out[j]), cy(out[j])) }
+            else { out.add(g); centres.add(floatArrayOf(gx, gy)) }
+        }
+        out.mapIndexed { i, g ->
+            Cluster(centres[i][0], centres[i][1], g,
+                g.minOf { it.x }, g.minOf { it.y }, g.maxOf { it.x }, g.maxOf { it.y })
+        }
+    }
+
+    private fun clusterRadius(n: Int) = (11 + 3.2f * kotlin.math.ln(n.toFloat()) / kotlin.math.ln(2f)).coerceAtMost(30f) * dp
+
+    private fun drawClusters(c: Canvas, vx0: Float, vy0: Float, vx1: Float, vy1: Float) {
+        clusterScreen.clear()
+        if (stops.isEmpty()) return
+        // cell of ~72dp on screen, rounded to a power of two in world units
+        val level = kotlin.math.ceil(kotlin.math.ln((72 * dp / scale).toDouble()) / kotlin.math.ln(2.0)).toInt()
+        val pad = 40 * dp / scale
+        for (cl in clustersFor(level)) {
+            if (cl.x < vx0 - pad || cl.x > vx1 + pad || cl.y < vy0 - pad || cl.y > vy1 + pad) continue
+            pt[0] = cl.x; pt[1] = cl.y; matrix.mapPoints(pt)
+            val n = cl.stops.size
+            val r = clusterRadius(n)
+            c.drawCircle(pt[0], pt[1], r, clusterFill); c.drawCircle(pt[0], pt[1], r, clusterRing)
+            clusterText.textSize = (if (n >= 100) 11 else 13) * dp
+            c.drawText(n.toString(), pt[0], pt[1] + clusterText.textSize * 0.36f, clusterText)
+            clusterScreen.add(cl to floatArrayOf(pt[0], pt[1], r))
+        }
+    }
+
+    private fun clusterHit(sx: Float, sy: Float): Cluster? =
+        clusterScreen.filter { (_, p) -> hypot(p[0] - sx, p[1] - sy) < p[2] + 8 * dp }
+            .minByOrNull { (_, p) -> hypot(p[0] - sx, p[1] - sy) }?.first
+
+    /** Glide in until the cluster's stops fill the view: they show as stops or smaller clusters. */
+    private fun zoomToCluster(cl: Cluster) {
+        val m = 56 * dp
+        // at least twice as close, so a tap always opens the group up; at most street level
+        fitBounds(cl.x0, cl.y0, cl.x1, cl.y1, m, m, m, m, minS = scale * 2f, maxS = 3f)
     }
 
     companion object {
