@@ -113,8 +113,10 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var compassBtn: ImageButton
     private lateinit var tabExplore: Button
     private lateinit var tabNavigate: Button
-    private lateinit var tabMap: ImageButton
-    private lateinit var tabText: ImageButton
+    private lateinit var content: EdgeSwipeLayout
+    private lateinit var edgeLeft: android.widget.ImageView
+    private lateinit var edgeRight: android.widget.ImageView
+    private lateinit var swipeHint: TextView
     private lateinit var tabMisc: ImageButton
     private lateinit var timeBtn: Button
     private lateinit var planBtn: Button
@@ -165,7 +167,10 @@ class MainActivity : Activity(), LocationListener {
         navInputs = findViewById(R.id.navInputs)
         setupSearchInputs()
         tabExplore = findViewById(R.id.tabExplore); tabNavigate = findViewById(R.id.tabNavigate)
-        tabMap = findViewById(R.id.tabMap); tabText = findViewById(R.id.tabText); tabMisc = findViewById(R.id.tabMisc)
+        tabMisc = findViewById(R.id.tabMisc)
+        content = findViewById(R.id.content); swipeHint = findViewById(R.id.swipeHint)
+        edgeLeft = findViewById(R.id.edgeLeft); edgeRight = findViewById(R.id.edgeRight)
+        setupEdgeSwipe()
         textPanel = findViewById(R.id.textPanel); textContent = findViewById(R.id.textContent)
         timeBtn = findViewById(R.id.timeBtn); planBtn = findViewById(R.id.planBtn)
         navBusy = findViewById(R.id.navBusy); navStatus = findViewById(R.id.navStatus)
@@ -173,8 +178,6 @@ class MainActivity : Activity(), LocationListener {
         navCancel.setOnClickListener { cancelNav() }
         tabExplore.setOnClickListener { setMode(Mode.EXPLORE) }
         tabNavigate.setOnClickListener { setMode(Mode.NAVIGATE) }
-        tabMap.setOnClickListener { setView(ViewKind.MAP) }
-        tabText.setOnClickListener { setView(ViewKind.TEXT) }
         tabMisc.setOnClickListener { showMisc() }
         tabMisc.imageTintList = ColorStateList.valueOf(iconOff)
         findViewById<Button>(R.id.swapEnds).setOnClickListener { swapEndpoints() }
@@ -223,12 +226,63 @@ class MainActivity : Activity(), LocationListener {
     private fun setMode(m: Mode) { mode = m; hideSearch(); updateMapForMode(); refreshView(); updateDebug() }
     private fun setView(v: ViewKind) { viewKind = v; hideSearch(); refreshView(); updateDebug() }
 
+    /**
+     * Map <-> text by pulling from either edge (two views, so both sides toggle).
+     * The text page slides over the map, following the finger; tapping a handle
+     * switches too. A hint says so until the user has pulled once.
+     */
+    private fun setupEdgeSwipe() {
+        var toText = false
+        var sign = 1f
+        fun w() = content.width.toFloat()
+        content.listener = object : EdgeSwipeLayout.Listener {
+            override fun onPullStart(fromLeft: Boolean): Boolean {
+                textPanel.animate().cancel()
+                toText = viewKind == ViewKind.MAP
+                sign = if (fromLeft) -1f else 1f
+                if (toText) { buildTextPanel(); textPanel.translationX = sign * w(); textPanel.visibility = View.VISIBLE }
+                return true
+            }
+            override fun onPull(dx: Float) {
+                textPanel.translationX = if (toText) sign * w() + dx else dx
+            }
+            override fun onPullEnd(commit: Boolean) {
+                // text in: settle at 0 (commit) or back out; text out: off the far side or back to 0
+                val target = when {
+                    toText && commit -> 0f
+                    toText -> sign * w()
+                    commit -> -sign * w()
+                    else -> 0f
+                }
+                textPanel.animate().translationX(target).setDuration(180)
+                    .setInterpolator(android.view.animation.DecelerateInterpolator())
+                    .withEndAction {
+                        textPanel.translationX = 0f
+                        if (commit) {
+                            prefs.edit().putBoolean("swipe_learned", true).apply()
+                            swipeHint.visibility = View.GONE
+                            setView(if (toText) ViewKind.TEXT else ViewKind.MAP)
+                        } else if (toText) textPanel.visibility = View.GONE
+                    }.start()
+            }
+        }
+        val toggle = View.OnClickListener { setView(if (viewKind == ViewKind.MAP) ViewKind.TEXT else ViewKind.MAP) }
+        edgeLeft.setOnClickListener(toggle); edgeRight.setOnClickListener(toggle)
+        if (!prefs.getBoolean("swipe_learned", false)) {
+            swipeHint.setText(R.string.hint_swipe_to_text)
+            swipeHint.visibility = View.VISIBLE
+            swipeHint.postDelayed({ swipeHint.animate().alpha(0f).setDuration(400).withEndAction {
+                swipeHint.visibility = View.GONE; swipeHint.alpha = 1f }.start() }, 6000)
+        }
+    }
+
     private fun refreshTabs() {
         tabExplore.backgroundTintList = ColorStateList.valueOf(if (mode == Mode.EXPLORE) tabOn else tabOff)
         tabNavigate.backgroundTintList = ColorStateList.valueOf(if (mode == Mode.NAVIGATE) tabOn else tabOff)
-        tabMap.imageTintList = ColorStateList.valueOf(if (viewKind == ViewKind.MAP) tabOn else iconOff)
-        tabText.imageTintList = ColorStateList.valueOf(if (viewKind == ViewKind.TEXT) tabOn else iconOff)
-        // center-me lives just above the bottom bar; only useful on the map
+        // the edge handles show the view a pull would bring in
+        val other = if (viewKind == ViewKind.MAP) R.drawable.ic_text else R.drawable.ic_map
+        edgeLeft.setImageResource(other); edgeRight.setImageResource(other)
+        // center-me and zoom only make sense on the map
         centerBtn.visibility = if (viewKind == ViewKind.MAP) View.VISIBLE else View.GONE
         zoomBox.visibility = centerBtn.visibility
         updateCompass()

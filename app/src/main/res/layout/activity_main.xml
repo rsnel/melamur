@@ -16,6 +16,11 @@
             <Button android:id="@+id/tabNavigate" style="@style/MmButton"
                 android:layout_width="0dp" android:layout_height="42dp"
                 android:layout_weight="1" android:text="@string/tab_navigate" />
+            <ImageButton android:id="@+id/tabMisc"
+                android:layout_width="42dp" android:layout_height="42dp"
+                android:layout_marginStart="6dp"
+                android:background="@android:color/transparent" android:scaleType="centerInside"
+                android:src="@drawable/ic_menu" android:contentDescription="@string/cd_menu" />
         </LinearLayout>
 
         <!-- Explore: one search bar -->
@@ -91,7 +96,9 @@
     </LinearLayout>
 
     <!-- content area: map or text -->
-    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp"
+    <!-- pull from the left or right edge to switch between map and text -->
+    <it.snel.melamur.EdgeSwipeLayout android:id="@+id/content"
+        android:layout_width="match_parent" android:layout_height="0dp"
         android:layout_weight="1">
 
         <it.snel.melamur.map.MapView android:id="@+id/map"
@@ -102,7 +109,7 @@
             android:background="@color/mm_black" android:visibility="gone">
             <LinearLayout android:id="@+id/textContent"
                 android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:orientation="vertical" android:padding="14dp" />
+                android:orientation="vertical" android:paddingVertical="14dp" android:paddingHorizontal="24dp" />
         </ScrollView>
 
         <!-- compass: top-left, only while the map is not north up; tap = north up -->
@@ -158,22 +165,23 @@
                 android:padding="8dp" android:textColor="@color/mm_white"
                 android:textSize="18sp" android:textStyle="bold" android:visibility="gone" />
         </LinearLayout>
-    </FrameLayout>
+        <!-- edge handles: show that the sides can be pulled; tap also switches -->
+        <ImageView android:id="@+id/edgeLeft"
+            android:layout_width="18dp" android:layout_height="64dp"
+            android:layout_gravity="start|center_vertical"
+            android:background="@drawable/edge_left" android:paddingEnd="2dp"
+            android:scaleType="centerInside" android:contentDescription="@string/cd_switch_view" />
+        <ImageView android:id="@+id/edgeRight"
+            android:layout_width="18dp" android:layout_height="64dp"
+            android:layout_gravity="end|center_vertical"
+            android:background="@drawable/edge_right" android:paddingStart="2dp"
+            android:scaleType="centerInside" android:contentDescription="@string/cd_switch_view" />
 
-    <!-- bottom bar: Map / Text / Misc (menu) -->
-    <LinearLayout android:layout_width="match_parent" android:layout_height="56dp"
-        android:background="@color/mm_panel" android:orientation="horizontal">
-        <ImageButton android:id="@+id/tabMap"
-            android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
-            android:background="@color/mm_panel" android:scaleType="centerInside"
-            android:src="@drawable/ic_map" android:contentDescription="@string/cd_map" />
-        <ImageButton android:id="@+id/tabText"
-            android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
-            android:background="@color/mm_panel" android:scaleType="centerInside"
-            android:src="@drawable/ic_text" android:contentDescription="@string/cd_text" />
-        <ImageButton android:id="@+id/tabMisc"
-            android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
-            android:background="@color/mm_panel" android:scaleType="centerInside"
-            android:src="@drawable/ic_menu" android:contentDescription="@string/cd_menu" />
-    </LinearLayout>
+        <!-- one-line hint about pulling the edges -->
+        <TextView android:id="@+id/swipeHint"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal|bottom" android:layout_marginBottom="84dp"
+            android:background="@drawable/panel_bg" android:paddingHorizontal="14dp" android:paddingVertical="8dp"
+            android:textColor="@color/mm_white" android:textSize="14sp" android:visibility="gone" />
+    </it.snel.melamur.EdgeSwipeLayout>
 </LinearLayout>

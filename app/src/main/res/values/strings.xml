@@ -24,6 +24,9 @@
     <string name="cd_map">Map view</string>
     <string name="cd_text">Text view</string>
     <string name="cd_menu">Menu</string>
+    <string name="cd_switch_view">Switch between map and text</string>
+    <string name="hint_swipe_to_text">Pull from the left or right edge for the text view</string>
+    <string name="hint_swipe_to_map">Pull from the left or right edge for the map</string>
     <string name="cd_swap">Swap from and to</string>
     <string name="zoom_in">+</string>
     <string name="zoom_out">−</string>
