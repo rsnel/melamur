@@ -41,6 +41,8 @@ import it.snel.melamur.map.Polyline
 import it.snel.melamur.map.RouteRenderer
 import it.snel.melamur.nav.NavHub
 import it.snel.melamur.nav.NavigationService
+import it.snel.melamur.update.UpdateFlow
+import it.snel.melamur.update.Updater
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -790,13 +792,15 @@ class MainActivity : Activity(), LocationListener {
 
     // ---------------- burger menu
     private fun showMisc() {
-        val items = arrayListOf(getString(R.string.menu_settings), getString(R.string.menu_reload))
+        val items = arrayListOf(getString(R.string.menu_settings), getString(R.string.menu_reload),
+            getString(R.string.menu_update))
         if (Settings.debug(this)) items.add(getString(R.string.menu_debug))
         items.add(getString(R.string.privacy)); items.add(getString(R.string.menu_about))
         AlertDialog.Builder(this).setItems(items.toTypedArray()) { _, w ->
             when (items[w]) {
                 getString(R.string.menu_settings) -> openSettings()
                 getString(R.string.menu_reload) -> reloadMenu()
+                getString(R.string.menu_update) -> UpdateFlow(this).start()
                 getString(R.string.menu_debug) -> lastItinerary?.let { startNavigation(it, simulate = true) } ?: toast(getString(R.string.sim_need))
                 getString(R.string.privacy) -> showConsent(false)
                 getString(R.string.menu_about) -> showAbout()
@@ -881,8 +885,10 @@ class MainActivity : Activity(), LocationListener {
 
     private fun showAbout() {
         val extra = DbManager.db?.attribution()?.let { "\n\nDataset attribution:\n$it" } ?: ""
+        val build = "\n\nInstalled: ${Updater.installedLabel()}" +
+            BuildConfig.CI_SHA.take(7).let { if (it.isNotEmpty()) " ($it)" else "" }
         AlertDialog.Builder(this).setTitle(R.string.about_title)
-            .setMessage(getString(R.string.about_text) + extra)
+            .setMessage(getString(R.string.about_text) + extra + build)
             .setPositiveButton(R.string.close, null).show()
     }
 

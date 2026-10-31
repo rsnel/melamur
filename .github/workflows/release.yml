@@ -38,7 +38,8 @@ jobs:
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then VN="${GITHUB_REF_NAME#v}"; else VN="0.0.0-dev.$GITHUB_RUN_NUMBER"; fi
           # versionCode must grow with every release; the run number of this workflow does
-          gradle --no-daemon assembleRelease -PmelamurVersionName="$VN" -PmelamurVersionCode="$GITHUB_RUN_NUMBER"
+          gradle --no-daemon assembleRelease -PmelamurVersionName="$VN" -PmelamurVersionCode="$GITHUB_RUN_NUMBER" \
+                 -PmelamurCiRun="$GITHUB_RUN_NUMBER" -PmelamurCiSha="$GITHUB_SHA"
 
       - name: Verify signature
         run: |

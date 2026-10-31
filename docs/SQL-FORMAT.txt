@@ -160,7 +160,9 @@ route_fetch                              (version_id, route_code) PK
 route_shape                              child of route (route_id)
     shape_no, name, direction_index (| NULL), leg_order (| NULL),
     reversed (1: polyline is drawn against the driving direction),
-    color, width, polyline
+    color ("#RRGGBB", converted from KML), width, polyline,
+    kml_color_raw (the colour exactly as in the KML file: "aabbggrr",
+    i.e. alpha, blue, green, red - NOT "rrggbb"; | NULL)
     MPT's original hand-drawn map lines. For display prefer
     direction.polyline.
 
@@ -236,8 +238,22 @@ stop                                    [versioned, key: stop_number]
     id, stop_number, name, short_name (from MPT's stop index),
     locality, lat, lon (| NULL; network-wide best position),
     position_status (unique, resolved, exclusive, ambiguous, conflict,
-    unmatched, manual; see README), content_hash, from_version,
-    to_version
+    unmatched, manual; see README. A database made by mpt_raw.py uses:
+    osm = the only OSM stop with that name, osm_choice = chosen among
+    several (see reports/stops_choices.csv), not_in_osm = no position;
+    tallinja = position taken from the Tallinja stops.json by
+    mpt_tallinja.py),
+    content_hash, from_version, to_version
+
+route_style                             not versioned, key: route_code
+    route_code   e.g. "44", "TD1"
+    color        line colour "#RRGGBB" (from Tallinja; use THIS for
+                 drawing a route, not the KML colours)   | NULL
+    text_color   "#RRGGBB" for text on that colour       | NULL
+    long_name    e.g. "Valletta - Ghajn Tuffieha"        | NULL
+    source, updated_at
+    Filled by mpt_tallinja.py; kept when new versions are imported.
+    A route without a row here has no known colour.
 
 view v_stop_routes (stop_number, route_code, from_version, to_version)
     which routes serve a stop; apply VALID() with the timetable's

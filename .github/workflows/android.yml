@@ -25,7 +25,9 @@ jobs:
           else
             echo "::notice::No signing secrets (e.g. a pull request from a fork): one-off debug key"
           fi
-          gradle --no-daemon assembleDebug
+          # the run number tells the in-app updater which build this is (and keeps versionCode rising)
+          gradle --no-daemon assembleDebug -PmelamurCiRun="$GITHUB_RUN_NUMBER" -PmelamurCiSha="$GITHUB_SHA" \
+                 -PmelamurVersionCode="$GITHUB_RUN_NUMBER"
           rm -f "$RUNNER_TEMP/release.jks"
           cp app/build/outputs/apk/debug/app-debug.apk melamur-debug.apk
 

@@ -23,6 +23,22 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         return out
     }
 
+    /** A line's official style from route_style (Tallinja); any field may be null. */
+    class RouteStyle(val color: Int?, val textColor: Int?, val longName: String?)
+
+    // route_style is not versioned and may be absent in older datasets of the same schema
+    private val routeStyles: Map<String, RouteStyle> by lazy {
+        val present = query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='route_style'", emptyArray()) { 1 }
+        if (present.isEmpty()) emptyMap()
+        else query("SELECT route_code, color, text_color, long_name FROM route_style", emptyArray()) {
+            it.getString(0) to RouteStyle(hexColor(it.getStringOrNull(1)), hexColor(it.getStringOrNull(2)), it.getStringOrNull(3))
+        }.toMap()
+    }
+
+    fun routeStyle(code: String): RouteStyle? = routeStyles[code]
+    /** The real line colour (route_style), when the dataset has one for [code]. */
+    private fun styleColor(code: String): Int? = routeStyles[code]?.color
+
     fun meta(key: String): String? =
         query("SELECT value FROM meta WHERE key=?", arrayOf(key)) { it.getString(0) }.firstOrNull()
 
@@ -49,8 +65,9 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         arrayOf("$v", "$v")
     ) { Stop(it.getInt(0), it.getString(1) ?: "", it.getStringOrNull(2), it.getDouble(3), it.getDouble(4)) }
 
-    /** Routes that serve [stopNumber], coloured from route_shape (first direction). */
+    /** Routes that serve [stopNumber], in their line colour (route_style, else route_shape). */
     fun linesForStop(stopNumber: Int, v: Int): List<Line> = linesForStopRaw(stopNumber, v).map { l ->
+        styleColor(l.code)?.let { return@map l.copy(color = it) }
         val sc = shapeColors(l.code, v)
         sc.keys.minOrNull()?.let { l.copy(color = sc.getValue(it)) } ?: l
     }
@@ -111,6 +128,8 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
      * the real per-direction line colour). Falls back to kml_color then palette.
      */
     fun shapeColors(code: String, v: Int): Map<Int, Int> {
+        // a real line colour from route_style wins; callers then fall back to routeColor()
+        if (styleColor(code) != null) return emptyMap()
         val out = HashMap<Int, Int>()
         query(
             "SELECT rs.direction_index, rs.color FROM route_shape rs " +
@@ -150,7 +169,7 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
     ) {
         LineDir(
             it.getString(0), it.getInt(1),
-            parseColor(it.getStringOrNull(2), "${it.getString(0)}/${it.getInt(1)}"),
+            styleColor(it.getString(0)) ?: parseColor(it.getStringOrNull(2), "${it.getString(0)}/${it.getInt(1)}"),
             if (it.isNull(3)) null else it.getInt(3),
             if (it.isNull(4)) null else it.getInt(4),
             it.getStringOrNull(5) ?: ""
@@ -177,7 +196,7 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         }
     }
 
-    fun routeColor(code: String, v: Int): Int = query(
+    fun routeColor(code: String, v: Int): Int = styleColor(code) ?: query(
         "SELECT kml_color FROM route WHERE code=? AND from_version<=? AND (to_version IS NULL OR to_version>?)",
         arrayOf(code, "$v", "$v")
     ) { it.getStringOrNull(0) }.firstOrNull().let { parseColor(it, code) }
@@ -235,6 +254,11 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
 
         private val FALLBACK = intArrayOf(0xFF1F77B4.toInt(), 0xFFFF7F0E.toInt(), 0xFF2CA02C.toInt(),
             0xFF9467BD.toInt(), 0xFF8C564B.toInt(), 0xFFE377C2.toInt(), 0xFF17BECF.toInt())
+
+        /** "#RRGGBB" (route_style) -> colour, or null if absent/invalid. */
+        fun hexColor(s: String?): Int? = s?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            try { Color.parseColor(if (it.startsWith("#")) it else "#$it") } catch (e: Exception) { null }
+        }
 
         /** kml_color is KML aabbggrr (8 hex) or "#rrggbb"; fall back by key hash. */
         fun parseColor(s: String?, key: String): Int {

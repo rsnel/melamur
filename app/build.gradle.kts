@@ -24,6 +24,10 @@ android {
         versionCode = (findProperty("melamurVersionCode") as String?)?.toInt() ?: 1
         versionName = (findProperty("melamurVersionName") as String?) ?: "0.1"
         // Endpoints / secrets: override in ~/.gradle/gradle.properties, never commit real keys.
+        // which CI build this is (the workflow's run number; 0 = built locally), for the updater
+        buildConfigField("int", "CI_RUN", "${(findProperty("melamurCiRun") as String?)?.toIntOrNull() ?: 0}")
+        buildConfigField("String", "CI_SHA", "\"${findProperty("melamurCiSha") ?: ""}\"")
+        buildConfigField("String", "GITHUB_REPO", "\"rsnel/melamur\"")
         buildConfigField("String", "AGGREGATOR_URL", "\"https://melamur.snel.it/aggregator/\"")
         buildConfigField("String", "AGGREGATOR_PIN", "\"${project.findProperty("melamurPin") ?: ""}\"")
         buildConfigField("String", "CLIENT_P12_PASSWORD", "\"${project.findProperty("melamurP12Password") ?: "changeit"}\"")
