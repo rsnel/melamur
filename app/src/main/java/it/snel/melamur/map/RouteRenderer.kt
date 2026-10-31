@@ -7,7 +7,6 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.floor
 import kotlin.math.hypot
-import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -22,7 +21,15 @@ import kotlin.math.sin
  * direction (Malta drives on the left) and carries direction arrows, at least
  * one per diverging stretch.
  */
-class DirLine(val path: Path, val color: Int, val arrows: FloatArray /* x,y,bearing */, val branch: Boolean = false)
+/**
+ * A stretch of a line that does not share its road with the other direction:
+ * points every [RouteRenderer.STEP] metres as x,y,bearing triples, plus its extent.
+ * The map spreads direction arrows over these at a constant density on screen.
+ */
+class ArrowRun(val pts: FloatArray, val x0: Float, val y0: Float, val x1: Float, val y1: Float) {
+    val count get() = pts.size / 3
+}
+class DirLine(val path: Path, val color: Int, val runs: List<ArrowRun>, val branch: Boolean = false)
 /** A stop the line calls at: where it is and which way the bus leaves it (NaN if unknown). */
 class LineStop(val id: String, val x: Float, val y: Float, val name: String, val bearing: Float, val color: Int,
                val label: String = name)
@@ -35,14 +42,13 @@ class RouteGfx(val route: BusRoute, val lines: List<DirLine>,
                val stops: List<LineStop> = emptyList(), val partner: IntArray = IntArray(0))
 
 object RouteRenderer {
-    private const val STEP = 10f          // sample spacing along a shape, metres
+    const val STEP = 10f                  // sample spacing along a shape, metres
     private const val OFFSET = 6f         // diverging parts: offset to the left
-    private const val ARROW_EVERY = 250f
     private const val MERGE = 35f         // opposite parts closer than this are drawn as one
     private const val CELL = 40f
     private const val MIN_SHARED = 5      // samples: shorter shared bits stay separate ...
     private const val MIN_APART = 3       // ... and shorter gaps between shared bits are bridged
-    private const val MIN_ARROW_RUN = 4   // samples: diverging stretches shorter than this get no arrow
+    private const val MIN_ARROW_RUN = 4   // samples: diverging stretches shorter than this get no arrows
 
     fun build(route: BusRoute, stops: Map<String, BusStop>): RouteGfx {
         val dirs = route.directions
@@ -93,7 +99,7 @@ object RouteRenderer {
                 sx[k] = tx / c; sy[k] = ty / c
             }
 
-            val path = Path(); val arrows = ArrayList<Float>()
+            val path = Path(); val runs = ArrayList<ArrowRun>()
             val xs = FloatArray(n); val ys = FloatArray(n)
             for (k in 0 until n) {
                 val p = ss[k]
@@ -105,7 +111,7 @@ object RouteRenderer {
                 }
                 if (k == 0) path.moveTo(xs[k], ys[k]) else path.lineTo(xs[k], ys[k])
             }
-            // arrows on the diverging stretches only: about one per ARROW_EVERY, at least one each
+            // the diverging stretches, where the map puts direction arrows
             var k = 0
             while (k < n) {
                 if (shared[k]) { k++; continue }
@@ -113,15 +119,18 @@ object RouteRenderer {
                 while (e < n && !shared[e]) e++
                 val len = e - k
                 if (len >= MIN_ARROW_RUN) {
-                    val cnt = maxOf(1, (len * STEP / ARROW_EVERY).roundToInt())
-                    for (m in 0 until cnt) {
-                        val i = k + ((m + 0.5f) * len / cnt).toInt().coerceIn(0, len - 1)
-                        arrows += xs[i]; arrows += ys[i]; arrows += ss[i][2]
+                    val pts = FloatArray(len * 3)
+                    var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
+                    for (i in 0 until len) {
+                        val x = xs[k + i]; val y = ys[k + i]
+                        pts[3 * i] = x; pts[3 * i + 1] = y; pts[3 * i + 2] = ss[k + i][2]
+                        if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y
                     }
+                    runs += ArrowRun(pts, x0, y0, x1, y1)
                 }
                 k = e
             }
-            DirLine(path, d.color, arrows.toFloatArray(), branch = d.id.startsWith("v"))
+            DirLine(path, d.color, runs, branch = d.id.startsWith("v"))
         }
         val (ls, partner) = lineStops(route, stops)
         return RouteGfx(route, lines, ls, partner)

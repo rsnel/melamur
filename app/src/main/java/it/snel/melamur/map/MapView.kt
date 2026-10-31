@@ -638,15 +638,24 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         }
         c.restore()
 
-        // direction arrows along each route line (screen space)
+        // direction arrows on the stretches each direction has to itself, at a constant
+        // density on screen: one per ARROW_SPACING_DP. The spacing in metres is a power
+        // of two, so zooming in only adds arrows between the ones already there; a
+        // stretch shorter than the spacing still gets one arrow, in its middle.
+        val spacing = Math.pow(2.0, kotlin.math.ceil(kotlin.math.log2((ARROW_SPACING_DP * dp / scale).toDouble()))).toFloat()
+        val stride = maxOf(1, (spacing / RouteRenderer.STEP).toInt())
         for (r in routes) for (dl in r.lines) {
             arrowPaint.color = if (highContrast) Color.WHITE else dl.color
-            val a = dl.arrows
-            var i = 0
-            while (i < a.size) {
-                pt[0] = a[i]; pt[1] = a[i + 1]; matrix.mapPoints(pt)
-                if (pt[0] in 0f..width.toFloat() && pt[1] in 0f..height.toFloat()) drawArrow(c, pt[0], pt[1], a[i + 2] - rot, 7 * dp)
-                i += 3
+            for (run in dl.runs) {
+                if (run.x1 < vx0 || run.x0 > vx1 || run.y1 < vy0 || run.y0 > vy1) continue
+                val n = run.count
+                if (n - 1 < stride) drawRunArrow(c, run, n / 2)
+                else {
+                    // multiples of the stride from the start of the stretch, so halving the
+                    // spacing keeps every existing arrow in place
+                    var i = stride
+                    while (i < n) { drawRunArrow(c, run, i); i += stride }
+                }
             }
         }
         // planned-journey overlay (screen space so stroke width and dots stay constant)
@@ -849,6 +858,12 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         c.drawRect(x, top, x + w, top + rows * cell, flagOutline)
     }
 
+    private fun drawRunArrow(c: Canvas, run: ArrowRun, i: Int) {
+        val a = run.pts
+        pt[0] = a[3 * i]; pt[1] = a[3 * i + 1]; matrix.mapPoints(pt)
+        if (pt[0] in 0f..width.toFloat() && pt[1] in 0f..height.toFloat()) drawArrow(c, pt[0], pt[1], a[3 * i + 2] - rot, 7 * dp)
+    }
+
     private fun drawArrow(c: Canvas, x: Float, y: Float, bearing: Float, size: Float) {
         c.save(); c.translate(x, y); c.rotate(bearing)
         arrow.reset(); arrow.moveTo(0f, -size); arrow.lineTo(size * 0.7f, size * 0.6f)
@@ -1002,6 +1017,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
 
     companion object {
         const val MIN_STOP_SCALE = 0.25f
+        private const val ARROW_SPACING_DP = 140f   // one direction arrow per this much line on screen
         private const val LINE_STOP_LABEL_SCALE = 0.35f
         private const val PAIR_MERGE_DP = 26f   // closer than this on screen: draw the pair as one
         private const val MIN_SCALE = 0.01f   // px per metre: whole islands
