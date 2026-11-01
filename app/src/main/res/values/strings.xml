@@ -24,6 +24,7 @@
     <string name="cd_map">Map view</string>
     <string name="cd_text">Text view</string>
     <string name="cd_menu">Menu</string>
+    <string name="text_select_variant">Select variant</string>
     <string name="line_fit">Show whole line</string>
     <string name="precalc_busy">Preparing the map for this database (only once)…</string>
     <string name="precalc_done">Map prepared</string>

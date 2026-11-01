@@ -103,6 +103,7 @@ class MainActivity : Activity(), LocationListener {
     private var stopLine: String? = null             // STOP: a line picked at the stop (first tap)
     private var stopLineDir = 0
     private var lineTrip: Long? = null               // LINE: show this run (picked from a stop's times)
+    private var lineVariant: Long? = null            // LINE: only trips of this variant (null = all of the direction)
     private var shownLineStopDirs: Map<String, List<Int>> = emptyMap()
     @Volatile private var precalc: Precalc? = null   // per-database results (stop directions, groups, line drawings)  // line on the map: stop id -> its directions
 
@@ -110,7 +111,7 @@ class MainActivity : Activity(), LocationListener {
     private data class Snap(
         val sub: Sub, val pointLat: Double?, val pointLon: Double?, val stop: Stop?,
         val stopLine: String?, val stopLineDir: Int, val line: String?, val dir: Int,
-        val lineTrip: Long?, val lineTextTime: LocalDateTime,
+        val lineTrip: Long?, val lineTextTime: LocalDateTime, val lineVariant: Long? = null,
     )
     private val history = ArrayList<Snap>()
     private var lastBack = 0L
@@ -475,7 +476,7 @@ class MainActivity : Activity(), LocationListener {
     }
 
     private fun snap() = Snap(sub, pointLat, pointLon, selectedStop, stopLine, stopLineDir,
-        selectedLine, selectedDir, lineTrip, lineTextTime)
+        selectedLine, selectedDir, lineTrip, lineTextTime, lineVariant)
 
     /** Keep the current Explore state for the back button (before changing it). */
     private fun remember() {
@@ -488,7 +489,7 @@ class MainActivity : Activity(), LocationListener {
     private fun restore(s: Snap) {
         sub = s.sub; pointLat = s.pointLat; pointLon = s.pointLon; selectedStop = s.stop
         stopLine = s.stopLine; stopLineDir = s.stopLineDir; selectedLine = s.line; selectedDir = s.dir
-        lineTrip = s.lineTrip; lineTextTime = s.lineTextTime
+        lineTrip = s.lineTrip; lineTextTime = s.lineTextTime; lineVariant = s.lineVariant
         if (selectedLine == null) lineBounds = null
         pendingFit = false; lineFitOffered = sub == Sub.LINE
         exploreChanged()
@@ -534,7 +535,7 @@ class MainActivity : Activity(), LocationListener {
         remember()
         if (code != selectedLine) lineBounds = null
         sub = Sub.LINE; selectedLine = code; selectedDir = dir; pendingFit = fit
-        lineFitOffered = true; lineTrip = trip
+        lineFitOffered = true; lineTrip = trip; lineVariant = null
         lineTextTime = LocalDateTime.now(Malta.ZONE)
         exploreChanged()
     }
@@ -722,11 +723,17 @@ class MainActivity : Activity(), LocationListener {
         val c1 = LinearLayout(this)
         c1.addView(smallBtn(getString(R.string.text_earlier)) { rollLine(-1) })
         c1.addView(smallBtn(getString(R.string.text_later)) { rollLine(1) })
-        var otherDir: Int? = null
-        val flip = smallBtn(getString(R.string.text_flip)) {
-            otherDir?.let { remember(); selectedDir = it; lineTrip = null; exploreChanged() }
+        // choose a direction and, within it, one variant (or all its trips)
+        var choices: List<Triple<String, Int, Long?>> = emptyList()   // label, direction, variant
+        val flip = smallBtn(getString(R.string.text_select_variant)) {
+            if (choices.isEmpty()) return@smallBtn
+            HcDialog(this).setTitle(getString(R.string.text_select_variant))
+                .setItems(choices.map { it.first }.toTypedArray()) { _, w ->
+                    val (_, d, x) = choices[w]
+                    remember(); selectedDir = d; lineVariant = x; lineTrip = null; exploreChanged()
+                }.show()
         }
-        flip.isEnabled = false; flip.alpha = 0.35f   // until we know there is a reverse direction
+        flip.isEnabled = false; flip.alpha = 0.35f   // until we know there is something to choose
         c1.addView(flip)
         textContent.addView(c1)
         val c2 = LinearLayout(this)
@@ -739,30 +746,45 @@ class MainActivity : Activity(), LocationListener {
             val dir = dirs.firstOrNull { it.directionIndex == selectedDir } ?: dirs.firstOrNull()
             val di = dir?.directionIndex ?: selectedDir
             val nowMin = lineTextTime.hour * 60 + lineTextTime.minute
-            // every trip in this direction, whichever variant (start stop) it runs
-            val trips = db.tripsOf(code, di, lineTextTime.toLocalDate(), v)
+            // every trip in this direction, whichever variant it runs - or only the chosen variant's
+            val lv = db.lineVariants(code, v)
+            val chosen = lineVariant?.let { lv.byId[it] }?.takeIf { it.directionIndex == di }
+            val allTrips = db.tripsOf(code, di, lineTextTime.toLocalDate(), v)
+            val trips = if (chosen == null) allTrips else {
+                val tv = db.tripVariants(allTrips.map { it.first })
+                allTrips.filter { tv[it.first] == chosen.id }
+            }
+            // what can be chosen: each direction (all trips), then its variants with their difference
+            val opts = ArrayList<Triple<String, Int, Long?>>()
+            for (d in dirs) {
+                val vs = lv.byId.values.filter { it.directionIndex == d.directionIndex }
+                    .sortedWith(compareBy({ !it.main }, { it.variant }))
+                opts += Triple("→ ${d.name}" + if (vs.size > 1) "  (all variants)" else "", d.directionIndex, null)
+                if (vs.size > 1) for (x in vs)
+                    opts += Triple("      ${lv.label(x.id)}", d.directionIndex, x.id)
+            }
             // a run picked at a stop, else the first one from the chosen time
             var idx = lineTrip?.let { t -> trips.indexOfFirst { it.first == t } } ?: -1
             if (idx < 0) { idx = trips.indexOfFirst { it.second >= nowMin }; if (idx < 0) idx = trips.size - 1 }
-            val reverse = dirs.map { it.directionIndex }.firstOrNull { it != di }
             val trip = trips.getOrNull(idx); val nextTrip = trips.getOrNull(idx + 1)
             val stops = trip?.let { db.tripStops(it.first) } ?: emptyList()
             val col = dir?.color ?: db.routeColor(code, v)
             val byNum = allStops.associateBy { it.number }
             val gap = if (trip != null && nextTrip != null) nextTrip.second - trip.second else null
             // variants: how this trip differs from the line's other versions in this direction
-            val lv = db.lineVariants(code, v)
             val variants = lv.labelsFor(di)
             val thisTrip = trip?.let { lv.label(db.tripVariants(listOf(it.first))[it.first]) }.orEmpty()
             runOnUiThread {
                 if (gen != textGen) return@runOnUiThread
-                otherDir = reverse
-                flip.isEnabled = reverse != null; flip.alpha = if (reverse != null) 1f else 0.35f
+                choices = opts
+                val any = opts.size > 1
+                flip.isEnabled = any; flip.alpha = if (any) 1f else 0.35f
                 textContent.addView(tv("$code  →  ${dir?.name ?: ""}", col, 18f, true))
-                if (variants.size > 1) textContent.addView(tv("${variants.size} variants: ${variants.joinToString("  ·  ")}", grey, 13f))
+                if (chosen != null) textContent.addView(tv("Variant: ${lv.label(chosen.id)}", white, 14f, true))
+                else if (variants.size > 1) textContent.addView(tv("All ${variants.size} variants: ${variants.joinToString("  ·  ")}", grey, 13f))
                 val headway = gap?.let { "   ·   next bus in $it min" } ?: if (trip != null) "   ·   last trip" else ""
                 textContent.addView(tv("Trip departing ${trip?.let { Malta.hhmm(it.second) } ?: "—"}$headway", grey, 13f))
-                if (thisTrip.isNotEmpty()) textContent.addView(tv("This trip: $thisTrip", white, 14f, true))
+                if (thisTrip.isNotEmpty() && chosen == null) textContent.addView(tv("This trip: $thisTrip", white, 14f, true))
                 for (s in stops) {
                     val stop = s.number?.let { byNum[it] }
                     val nm = stop?.display ?: s.name
@@ -921,7 +943,10 @@ class MainActivity : Activity(), LocationListener {
             val v = db.versionFor(lineTextTime.toLocalDate())
             val dirs = db.directionsForRoute(code, v)
             val di = (dirs.firstOrNull { it.directionIndex == selectedDir } ?: dirs.firstOrNull())?.directionIndex ?: selectedDir
-            val trips = db.tripsOf(code, di, lineTextTime.toLocalDate(), v)   // all variants
+            val all = db.tripsOf(code, di, lineTextTime.toLocalDate(), v)   // all variants ...
+            val trips = lineVariant?.let { x ->                                // ... or the chosen one's
+                val tv = db.tripVariants(all.map { it.first }); all.filter { tv[it.first] == x }
+            }?.takeIf { it.isNotEmpty() } ?: all
             if (trips.isEmpty()) return@Thread
             val nowMin = lineTextTime.hour * 60 + lineTextTime.minute
             var idx = lineTrip?.let { t -> trips.indexOfFirst { it.first == t } } ?: -1

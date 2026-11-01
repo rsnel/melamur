@@ -368,23 +368,43 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
          * that variant serves: "via X"; one it leaves out: "skips X"), else by
          * their own description. [stops]: variant id -> its stop names in order.
          */
+        /**
+         * Short labels for how each variant differs from the main variant of its
+         * direction (only where a direction has several): "via Popeye", "no further
+         * than Kircippu", "from Bianco", "not via Popeye", "express". The main
+         * variant shows its own "via" (or "usual route"). Variants that still look
+         * alike are told apart by their stops ("via X" / "skips X").
+         */
         fun variantLabels(vs: List<Variant>, stops: Map<Long, List<String>> = emptyMap()): Map<Long, String> {
             val out = HashMap<Long, String>()
             fun norm(s: String?) = s?.trim()?.lowercase().orEmpty()
             fun clean(s: String?) = s?.trim()?.takeIf { it.isNotEmpty() }
             for ((_, group) in vs.groupBy { it.directionIndex }) {
                 if (group.size < 2) continue
-                fun differs(f: (Variant) -> String?) = group.map { norm(f(it)) }.toSet().size > 1
-                val dFrom = differs { it.origin }; val dVia = differs { it.via }; val dTo = differs { it.destination }
-                val dExpress = group.map { it.express }.toSet().size > 1
+                val main = group.firstOrNull { it.main } ?: group.first()
+                val mainStops = stops[main.id].orEmpty().map { norm(it) }
                 for (x in group) {
                     val parts = ArrayList<String>()
-                    if (dFrom) clean(x.origin)?.let { parts += "from $it" }
-                    if (dVia) clean(x.via)?.let { parts += "via $it" }
-                    if (dTo) clean(x.destination)?.let { parts += "to $it" }
-                    if (dExpress && x.express) parts += "express"
+                    if (x === main) {
+                        clean(x.via)?.let { parts += "via $it" }
+                        if (x.express) parts += "express"
+                        if (parts.isEmpty()) parts += "usual route"
+                        out[x.id] = parts.joinToString(", "); continue
+                    }
+                    if (norm(x.origin) != norm(main.origin)) clean(x.origin)?.let { parts += "from $it" }
+                    if (norm(x.destination) != norm(main.destination)) clean(x.destination)?.let { d ->
+                        // ends at a stop the main route passes: it turns back early
+                        val i = mainStops.indexOf(norm(d))
+                        parts += if (i in 0 until mainStops.size - 1) "no further than $d" else "to $d"
+                    }
+                    if (norm(x.via) != norm(main.via)) {
+                        val v = clean(x.via)
+                        if (v != null) parts += "via $v" else clean(main.via)?.let { parts += "not via $it" }
+                    }
+                    if (x.express && !main.express) parts += "express"
                     out[x.id] = parts.joinToString(", ")
                 }
+                // still alike: tell them apart by their stops
                 for ((_, same) in group.groupBy { out[it.id] }) if (same.size > 1) {
                     val resolved = same.associate { x ->
                         val mine = stops[x.id].orEmpty()
@@ -392,10 +412,9 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
                         val otherKeys = others.map { norm(it) }.toSet(); val mineKeys = mine.map { norm(it) }.toSet()
                         val only = mine.firstOrNull { norm(it) !in otherKeys }
                         val skips = others.firstOrNull { norm(it) !in mineKeys }
-                        x.id to (only?.let { "via $it" } ?: skips?.let { "skips $it" }
-                            ?: clean(x.description) ?: clean(x.name) ?: "variant ${x.variant}")
+                        x.id to (only?.let { "via $it" } ?: skips?.let { "skips $it" } ?: "variant ${x.variant}")
                     }
-                    for (x in same) out[x.id] = listOfNotNull(out[x.id]?.takeIf { it.isNotEmpty() }, resolved[x.id]).joinToString(", ")
+                    for (x in same) out[x.id] = listOfNotNull(out[x.id]?.takeIf { it.isNotEmpty() && it != "usual route" }, resolved[x.id]).joinToString(", ")
                 }
             }
             return out
