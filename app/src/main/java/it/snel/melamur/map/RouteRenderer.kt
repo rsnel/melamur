@@ -44,6 +44,7 @@ class RouteGfx(val id: String, val lines: List<GeomPiece>, val stops: List<LineS
 /**
  * Builds a line's drawing from the polylines of ALL its variants (route_variant),
  * never from the older direction / route_shape geometry:
+ * (Only a line without any variant geometry falls back to direction.polyline.)
  *  - variants are taken main first, then longest first; a stretch another variant
  *    already drew (same road, same way; or a shared two-way stretch) is not drawn
  *    again, so branches only add the roads they alone use;
@@ -74,6 +75,10 @@ object RouteRenderer {
         val ins = vs.mapNotNull { x ->
             val shape = db.variantShape(x) ?: return@mapNotNull null
             Input(x.directionIndex ?: 0, x.main, shape, vstops[x.id].orEmpty())
+        }.ifEmpty {
+            // stopgap for lines without any variant geometry (TD10 for now): the older
+            // direction.polyline with the timetable's stop list
+            db.directionsForRoute(code, v).map { d -> Input(d.directionIndex, true, d.shape, d.stopNumbers.map { it to Float.NaN }) }
         }
         return build(code, ins, db.routeColor(code, v), stops)
     }

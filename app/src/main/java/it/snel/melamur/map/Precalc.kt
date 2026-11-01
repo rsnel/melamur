@@ -35,7 +35,7 @@ class Precalc(
     val lines: Map<String, RouteGfx> = emptyMap(),
 ) {
     companion object {
-        private const val FORMAT = 3
+        private const val FORMAT = 4
         private const val FILE = "precalc.bin"
 
         /** Identity of what the results depend on. */
