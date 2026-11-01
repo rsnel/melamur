@@ -771,13 +771,16 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             }
         }
 
+        // stop symbols shrink as you zoom out (down to 40 %), staying recognisable
+        val sz = stopSizeFactor()
         if (scale > MIN_STOP_SCALE) {
             for (s in stops) {
                 if (s.x < vx0 || s.x > vx1 || s.y < vy0 || s.y > vy1) continue
                 if (s.id in lineStopIds && s.id != selectedStopId && s.id != nextStopId && s.id != destinationStopId) continue
                 pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
                 val hl = s.id == nextStopId || s.id == destinationStopId || s.id == selectedStopId
-                val r = (if (hl) 7 else 4) * dp
+                val r = (if (hl) 7f else 4f * sz) * dp
+                stopRing.strokeWidth = (if (hl) 2f else maxOf(1f, 2f * sz)) * dp
                 stopFill.color = if (s.id == destinationStopId) accent else stopBase
                 val bs = stopBearings[s.id] ?: s.heading?.let { floatArrayOf(it) } ?: NO_BEARINGS
                 drawStopGlyph(c, pt[0], pt[1], r, bs, stopFill, stopRing)
@@ -982,7 +985,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val glyphCache = HashMap<String, Path>()
     private fun glyph(r: Float, bearings: FloatArray): Path {
         val key = buildString {
-            append(r.toInt())
+            append((r * 2).toInt())
             for (b in bearings) { append(','); append(((b / 5f).roundToInt() * 5) % 360) }
         }
         return glyphCache.getOrPut(key) {
@@ -1004,6 +1007,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         }
     }
 
+    /** 1 at street level, smaller further out, never below 0.4 (circle and triangles still readable). */
+    private fun stopSizeFactor(): Float = Math.pow((scale / 1.5f).toDouble(), 0.3).toFloat().coerceIn(0.4f, 1f)
+
     private fun drawStopGlyph(c: Canvas, x: Float, y: Float, r: Float, bearings: FloatArray, fillP: Paint, ringP: Paint) {
         if (bearings.isEmpty()) { c.drawCircle(x, y, r, fillP); c.drawCircle(x, y, r, ringP); return }
         val g = glyph(r, bearings)
@@ -1015,9 +1021,12 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private fun drawLineStops(c: Canvas) {
         for (m in lineMarks) {
             if (m.sx < -20 * dp || m.sx > width + 20 * dp || m.sy < -20 * dp || m.sy > height + 20 * dp) continue
-            val r = (if (m.ids.size > 1) 6.5f else 5.5f) * dp
+            val sel = m.ids.any { it == selectedStopId }
+            val f = if (sel) 1f else stopSizeFactor()
+            val r = (if (m.ids.size > 1) 6.5f else 5.5f) * f * dp
+            lineStopRing.strokeWidth = maxOf(1f, 2.5f * f) * dp
             drawStopGlyph(c, m.sx, m.sy, r, m.bearings, lineStopFill, lineStopRing)
-            if (m.labelled || m.ids.any { it == selectedStopId })
+            if (m.labelled || sel)
                 c.drawText(m.name, m.sx + r + 4 * dp, m.sy + 4 * dp, label)
         }
     }
