@@ -265,7 +265,12 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
                 "WHERE route_code=? AND from_version<=? AND (to_version IS NULL OR to_version>?) ORDER BY direction_index",
             arrayOf(code, "$v", "$v")
         ) { arrayOf(it.getLong(0).toString(), it.getInt(1).toString(), it.getStringOrNull(2) ?: "", it.getStringOrNull(3) ?: "") }
-        return dirs.mapNotNull { (id, dir, name, poly) ->
+        // the Tallinja geometry of each direction's main variant, where the dataset has it;
+        // else direction.polyline
+        val mainPoly = variants(code, v).filter { it.main && !it.polyline.isNullOrEmpty() && it.directionIndex != null }
+            .associate { it.directionIndex!! to it.polyline!! }
+        return dirs.mapNotNull { (id, dir, name, dirPoly) ->
+            val poly = mainPoly[dir.toInt()] ?: dirPoly
             if (poly.isEmpty()) return@mapNotNull null
             val pts = TallinjaApi.decodePolyline(poly)
             val xs = FloatArray(pts.size / 2); val ys = FloatArray(pts.size / 2)

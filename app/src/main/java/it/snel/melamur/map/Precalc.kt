@@ -30,7 +30,7 @@ class Precalc(
     val clusters: Map<Int, List<StopCluster>>,
 ) {
     companion object {
-        private const val FORMAT = 1
+        private const val FORMAT = 2
         private const val FILE = "precalc.bin"
 
         /** Identity of what the results depend on. */
