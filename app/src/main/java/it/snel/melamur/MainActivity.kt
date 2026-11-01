@@ -35,6 +35,7 @@ import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
 import it.snel.melamur.data.*
+import it.snel.melamur.map.Precalc
 import it.snel.melamur.map.Geo
 import it.snel.melamur.map.MapView
 import it.snel.melamur.map.Polyline
@@ -99,6 +100,18 @@ class MainActivity : Activity(), LocationListener {
     private var pointLon: Double? = null
     private var selectedStop: Stop? = null           // STOP: the stop shown
     private var stopLineDirs: Map<String, Int> = emptyMap()  // STOP: direction to open per line
+    private var stopLine: String? = null             // STOP: a line picked at the stop (first tap)
+    private var stopLineDir = 0
+    private var lineTrip: Long? = null               // LINE: show this run (picked from a stop's times)
+
+    /** One Explore state, for the back button. */
+    private data class Snap(
+        val sub: Sub, val pointLat: Double?, val pointLon: Double?, val stop: Stop?,
+        val stopLine: String?, val stopLineDir: Int, val line: String?, val dir: Int,
+        val lineTrip: Long?, val lineTextTime: LocalDateTime,
+    )
+    private val history = ArrayList<Snap>()
+    private var lastBack = 0L
     private var selectedLine: String? = null         // LINE: the line shown (null = list of lines)
     private var selectedDir = 0
     private var pendingFit = false                   // LINE: zoom to the line once when chosen
@@ -199,7 +212,14 @@ class MainActivity : Activity(), LocationListener {
             stopFor(bs)?.let { if (mode == Mode.EXPLORE) selectStop(it, moveCamera = false) else showStop(it) }
         }
         // a line picked from the stop's chips: show it but keep the view (the button offers the zoom)
-        map.onChipTapped = { code -> if (mode == Mode.EXPLORE) selectLine(code, stopLineDirs[code] ?: 0, fit = false) }
+        // stop on the map: the first tap on a line shows where it goes and when it leaves,
+        // the second tap on the same line shows the line (keeping the view)
+        map.onChipTapped = { code ->
+            if (mode == Mode.EXPLORE) {
+                if (stopLine == code) selectLine(code, stopLineDir, fit = false)
+                else pickStopLine(code, stopLineDirs[code] ?: 0)
+            }
+        }
         map.onMapTapped = { lat, lon -> if (mode == Mode.EXPLORE) selectPoint(lat, lon) }
         map.onMapLongPress = { lat, lon, poi -> showLongPressMenu(lat, lon, poi) }
         destination.setOnClickListener { if (NavHub.snapshot.active || NavHub.snapshot.arrived) cancelNav() }
@@ -441,25 +461,75 @@ class MainActivity : Activity(), LocationListener {
         updateDebug()
     }
 
+    private fun snap() = Snap(sub, pointLat, pointLon, selectedStop, stopLine, stopLineDir,
+        selectedLine, selectedDir, lineTrip, lineTextTime)
+
+    /** Keep the current Explore state for the back button (before changing it). */
+    private fun remember() {
+        if (mode != Mode.EXPLORE) return
+        val s = snap()
+        if (history.lastOrNull() != s) history.add(s)
+        while (history.size > 60) history.removeAt(0)
+    }
+
+    private fun restore(s: Snap) {
+        sub = s.sub; pointLat = s.pointLat; pointLon = s.pointLon; selectedStop = s.stop
+        stopLine = s.stopLine; stopLineDir = s.stopLineDir; selectedLine = s.line; selectedDir = s.dir
+        lineTrip = s.lineTrip; lineTextTime = s.lineTextTime
+        if (selectedLine == null) lineBounds = null
+        pendingFit = false; lineFitOffered = sub == Sub.LINE
+        exploreChanged()
+    }
+
+    /**
+     * Back: in Explore, return to the previous state (in the same view: never switches
+     * map/text). With nothing to go back to, a second press within 2 s leaves the app.
+     */
+    @Deprecated("Deprecated in Java")
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (searchResults.visibility == View.VISIBLE) { hideSearch(); return }
+        if (mode == Mode.EXPLORE && history.isNotEmpty()) {
+            val cur = snap()
+            var s = history.removeAt(history.size - 1)
+            while (s == cur && history.isNotEmpty()) s = history.removeAt(history.size - 1)
+            if (s != cur) { restore(s); return }
+        }
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastBack < 2000) { super.onBackPressed(); return }
+        lastBack = now
+        toast(getString(R.string.back_again))
+    }
+
     /** POINT mode at (lat, lon); null = your own position. */
     private fun selectPoint(lat: Double?, lon: Double?) {
+        remember()
         sub = Sub.POINT; pointLat = lat; pointLon = lon
         exploreChanged()
     }
 
     /** STOP mode for [stop]; [moveCamera] centres the map on it (when chosen from text or search). */
     private fun selectStop(stop: Stop, moveCamera: Boolean) {
-        sub = Sub.STOP; selectedStop = stop
+        remember()
+        sub = Sub.STOP; selectedStop = stop; stopLine = null
         if (moveCamera && !map.follow) map.centerOn(stop.asBusStop())
         exploreChanged()
     }
 
     /** LINE mode for [code] in direction [dir]; with [fit] the map zooms to the whole line. */
-    private fun selectLine(code: String, dir: Int = 0, fit: Boolean = true) {
+    private fun selectLine(code: String, dir: Int = 0, fit: Boolean = true, trip: Long? = null) {
+        remember()
         if (code != selectedLine) lineBounds = null
         sub = Sub.LINE; selectedLine = code; selectedDir = dir; pendingFit = fit
-        lineFitOffered = true
+        lineFitOffered = true; lineTrip = trip
         lineTextTime = LocalDateTime.now(Malta.ZONE)
+        exploreChanged()
+    }
+
+    /** STOP mode, first step on a line: [code] in direction [dir] at the selected stop (null = all lines). */
+    private fun pickStopLine(code: String?, dir: Int) {
+        remember()
+        stopLine = code; stopLineDir = dir
         exploreChanged()
     }
 
@@ -478,14 +548,32 @@ class MainActivity : Activity(), LocationListener {
                 val text = db.routeStyle(l.code)?.textColor ?: contrastText(l.color)
                 MapView.Chip(l.code, l.color, text)
             }
+            // the picked line: destination, next departure and the one after
+            val pick = stopLine; val pickDir = stopLineDir
+            val detail = if (pick == null) emptyList() else {
+                val deps = db.departuresFrom(stop.number, now, 400)
+                    .filter { it.routeCode == pick && it.directionIndex == pickDir }.take(2)
+                val towards = deps.firstOrNull()?.towards ?: db.directionNames(pick, v)[pickDir] ?: ""
+                val a = deps.getOrNull(0); val b = deps.getOrNull(1)
+                listOf("$pick  →  $towards",
+                    if (a == null) "No more departures today"
+                    else "${Malta.hhmm(a.minutes)} (${minsFrom(now, a)})" + (b?.let { "  ·  then ${Malta.hhmm(it.minutes)}" } ?: "  ·  last today"),
+                    getString(R.string.callout_tap_again))
+            }
             runOnUiThread {
                 // still the same selection?
-                if (mode == Mode.EXPLORE && sub == Sub.STOP && selectedStop?.number == stop.number) {
+                if (mode == Mode.EXPLORE && sub == Sub.STOP && selectedStop?.number == stop.number && stopLine == pick) {
                     stopLineDirs = dirs
                     map.setStopCallout(stop.x, stop.y, chips)
+                    map.setCalloutDetail(pick, detail)
                 }
             }
         }.start()
+    }
+
+    private fun minsFrom(now: LocalDateTime, d: Departure): String {
+        val m = java.time.Duration.between(now, d.time).toMinutes()
+        return if (m <= 0) "now" else "in $m min"
     }
 
     /** Black or white text, whichever reads better on [bg]. */
@@ -503,7 +591,7 @@ class MainActivity : Activity(), LocationListener {
             Mode.EXPLORE -> "EXPLORE · " + when (sub) {
                 Sub.POINT -> pointLat?.let { "POINT %.5f,%.5f".format(java.util.Locale.US, it, pointLon) } ?: "POINT (you)"
                 Sub.LINE -> "LINE ${selectedLine ?: "(list)"}/$selectedDir"
-                Sub.STOP -> "STOP ${selectedStop?.let { "#${it.number}" } ?: "-"}"
+                Sub.STOP -> "STOP ${selectedStop?.let { "#${it.number}" } ?: "-"}" + (stopLine?.let { " · $it/$stopLineDir" } ?: "")
             }
         }
         val track = when { map.headingUp -> "heading-up"; map.follow -> "follow"; else -> "free" }
@@ -622,7 +710,12 @@ class MainActivity : Activity(), LocationListener {
         val c1 = LinearLayout(this)
         c1.addView(smallBtn(getString(R.string.text_earlier)) { rollLine(-1) })
         c1.addView(smallBtn(getString(R.string.text_later)) { rollLine(1) })
-        c1.addView(smallBtn(getString(R.string.text_flip)) { selectedDir = 1 - selectedDir; updateMapForMode(); buildTextPanel() })
+        var otherDir: Int? = null
+        val flip = smallBtn(getString(R.string.text_flip)) {
+            otherDir?.let { remember(); selectedDir = it; lineTrip = null; exploreChanged() }
+        }
+        flip.isEnabled = false; flip.alpha = 0.35f   // until we know there is a reverse direction
+        c1.addView(flip)
         textContent.addView(c1)
         val c2 = LinearLayout(this)
         c2.addView(smallBtn(getString(R.string.text_all_lines)) { showAllLines() })
@@ -636,7 +729,10 @@ class MainActivity : Activity(), LocationListener {
             val nowMin = lineTextTime.hour * 60 + lineTextTime.minute
             // every trip in this direction, whichever variant (start stop) it runs
             val trips = db.tripsOf(code, di, lineTextTime.toLocalDate(), v)
-            var idx = trips.indexOfFirst { it.second >= nowMin }; if (idx < 0) idx = trips.size - 1
+            // a run picked at a stop, else the first one from the chosen time
+            var idx = lineTrip?.let { t -> trips.indexOfFirst { it.first == t } } ?: -1
+            if (idx < 0) { idx = trips.indexOfFirst { it.second >= nowMin }; if (idx < 0) idx = trips.size - 1 }
+            val reverse = dirs.map { it.directionIndex }.firstOrNull { it != di }
             val trip = trips.getOrNull(idx); val nextTrip = trips.getOrNull(idx + 1)
             val stops = trip?.let { db.tripStops(it.first) } ?: emptyList()
             val col = dir?.color ?: db.routeColor(code, v)
@@ -648,6 +744,8 @@ class MainActivity : Activity(), LocationListener {
             val thisTrip = trip?.let { lv.label(db.tripVariants(listOf(it.first))[it.first]) }.orEmpty()
             runOnUiThread {
                 if (gen != textGen) return@runOnUiThread
+                otherDir = reverse
+                flip.isEnabled = reverse != null; flip.alpha = if (reverse != null) 1f else 0.35f
                 textContent.addView(tv("$code  →  ${dir?.name ?: ""}", col, 18f, true))
                 if (variants.size > 1) textContent.addView(tv("${variants.size} variants: ${variants.joinToString("  ·  ")}", grey, 13f))
                 val headway = gap?.let { "   ·   next bus in $it min" } ?: if (trip != null) "   ·   last trip" else ""
@@ -666,7 +764,7 @@ class MainActivity : Activity(), LocationListener {
     }
 
     /** LINE mode without a line: the list of all lines. */
-    private fun showAllLines() { sub = Sub.LINE; selectedLine = null; exploreChanged() }
+    private fun showAllLines() { remember(); sub = Sub.LINE; selectedLine = null; lineTrip = null; exploreChanged() }
 
     /** POINT: coordinates, the street and town nearby, the nearest landmark and stops. */
     private fun buildPointText() {
@@ -716,6 +814,7 @@ class MainActivity : Activity(), LocationListener {
         val db = DbManager.db ?: return
         textContent.addView(tv(stop.display, white, 17f, true))
         textContent.addView(tv("Stop #${stop.number}", grey, 13f))
+        stopLine?.let { buildStopLineText(db, stop, it, stopLineDir); return }
         textContent.addView(smallBtn(getString(R.string.text_all_lines)) { showAllLines() })
         val gen = textGen
         Thread {
@@ -744,11 +843,61 @@ class MainActivity : Activity(), LocationListener {
                     val then = b?.let { "  ·  then ${Malta.hhmm(it.minutes)}" } ?: "  ·  last today"
                     val vl = variantLabel[a.tripId].orEmpty().let { if (it.isEmpty()) "" else "  ·  $it" }
                     textContent.addView(clickRow(listOf(lineColors(a.routeCode, white)),
-                        "${a.routeCode}  →  ${a.towards}$vl", next + then) { selectLine(a.routeCode, a.directionIndex) })
+                        "${a.routeCode}  →  ${a.towards}$vl", next + then) { pickStopLine(a.routeCode, a.directionIndex) })
                 }
                 for (l in idle) textContent.addView(clickRow(listOf(lineColors(l.code, l.color)), l.code,
-                    "no more departures today") { selectLine(l.code, 0) })
+                    "no more departures today") { pickStopLine(l.code, stopLineDirs[l.code] ?: 0) })
                 if (rows.isEmpty() && idle.isEmpty()) textContent.addView(tv("No lines serve this stop.", grey))
+            }
+        }.start()
+    }
+
+    /**
+     * STOP, one line picked: all of today's departures of that line (direction) at this
+     * stop, the next one in bold. Tapping a time (or the line) shows that whole run.
+     */
+    private fun buildStopLineText(db: MptDb, stop: Stop, code: String, dir: Int) {
+        val bar = LinearLayout(this)
+        bar.addView(smallBtn(getString(R.string.text_stop_all_lines)) { pickStopLine(null, 0) })
+        textContent.addView(bar)
+        val gen = textGen
+        Thread {
+            val now = LocalDateTime.now(Malta.ZONE)
+            val today = now.toLocalDate()
+            val v = db.versionFor(today)
+            val deps = db.departures(stop.number, today, v)
+                .filter { it.routeCode == code && it.directionIndex == dir }.sortedBy { it.minutes }
+            val nowMin = now.hour * 60 + now.minute
+            val nextIdx = deps.indexOfFirst { it.minutes >= nowMin }
+            val towards = deps.firstOrNull()?.towards ?: db.directionNames(code, v)[dir] ?: ""
+            val col = lineColors(code, db.routeColor(code, v)).first()
+            runOnUiThread {
+                if (gen != textGen) return@runOnUiThread
+                val next = deps.getOrNull(nextIdx)
+                textContent.addView(clickRow(listOf(lineColors(code, col)), "$code  →  $towards",
+                    next?.let { "Next ${Malta.hhmm(it.minutes)} (${minsFrom(now, it)})  ·  tap a time for the whole run" }
+                        ?: "No more departures today") {
+                    selectLine(code, dir, trip = (next ?: deps.lastOrNull())?.tripId)
+                })
+                if (deps.isEmpty()) { textContent.addView(tv("No departures today.", grey)); return@runOnUiThread }
+                // the times in rows of five; past ones grey, the next one bold
+                val d = resources.displayMetrics.density
+                var row: LinearLayout? = null
+                for ((i, dep) in deps.withIndex()) {
+                    if (i % 5 == 0) { row = LinearLayout(this); textContent.addView(row) }
+                    val past = nextIdx < 0 || i < nextIdx
+                    val t = tv(Malta.hhmm(dep.minutes), if (past) grey else white, 16f, i == nextIdx).apply {
+                        gravity = android.view.Gravity.CENTER
+                        setPadding(0, (8 * d).toInt(), 0, (8 * d).toInt())
+                        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                        if (i == nextIdx) setBackgroundColor(Color.rgb(60, 60, 60))
+                        setOnClickListener { selectLine(code, dir, trip = dep.tripId) }
+                    }
+                    row!!.addView(t)
+                }
+                // keep the grid aligned: pad the last row
+                val rest = (5 - deps.size % 5) % 5
+                repeat(rest) { row?.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(0, 1, 1f) }) }
             }
         }.start()
     }
@@ -762,10 +911,13 @@ class MainActivity : Activity(), LocationListener {
             val trips = db.tripsOf(code, di, lineTextTime.toLocalDate(), v)   // all variants
             if (trips.isEmpty()) return@Thread
             val nowMin = lineTextTime.hour * 60 + lineTextTime.minute
-            var idx = trips.indexOfFirst { it.second >= nowMin }; if (idx < 0) idx = trips.size - 1
+            var idx = lineTrip?.let { t -> trips.indexOfFirst { it.first == t } } ?: -1
+            if (idx < 0) { idx = trips.indexOfFirst { it.second >= nowMin }; if (idx < 0) idx = trips.size - 1 }
             val target = trips[(idx + step).coerceIn(0, trips.size - 1)]
-            lineTextTime = Malta.at(lineTextTime.toLocalDate(), target.second)
-            runOnUiThread { buildTextPanel() }
+            runOnUiThread {
+                lineTextTime = Malta.at(lineTextTime.toLocalDate(), target.second); lineTrip = target.first
+                buildTextPanel()
+            }
         }.start()
     }
 
@@ -961,12 +1113,31 @@ class MainActivity : Activity(), LocationListener {
         NavHub.stops = stops.associateBy { it.number }
         val first = db.firstValidFrom()
         val today = LocalDate.now(Malta.ZONE).toString()
+        val byId = bs.associateBy { it.id }
+        // what the map can work out once per database: stop directions and stop groups
+        val density = resources.displayMetrics.density
+        val key = Precalc.key(this, v, density)
+        val cached = Precalc.load(this, key, byId)
         runOnUiThread {
-            busStopsById = bs.associateBy { it.id }
+            busStopsById = byId
             map.stops = bs
+            cached?.let { map.setPrecalc(it) }
             rebuildIndex()
             if (first != null && today < first) toast(getString(R.string.db_future, first))
             render()
+        }
+        if (cached == null) {
+            val note = findViewById<TextView>(R.id.precalcNote)
+            runOnUiThread { note.text = getString(R.string.precalc_busy); note.visibility = View.VISIBLE }
+            val p = Precalc.compute(db, v, bs, density) { msg ->
+                runOnUiThread { note.text = getString(R.string.precalc_busy) + "\n" + msg }
+            }
+            try { Precalc.save(this, key, p) } catch (e: Exception) { /* used this session anyway */ }
+            runOnUiThread {
+                if (map.stops === bs) map.setPrecalc(p)
+                note.visibility = View.GONE
+                toast(getString(R.string.precalc_done))
+            }
         }
     }
 

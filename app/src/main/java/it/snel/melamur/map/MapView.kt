@@ -24,6 +24,7 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 /**
@@ -94,7 +95,17 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private val chipHits = ArrayList<ChipHit>()
     private val calloutRect = android.graphics.RectF()
     /** Show the lines serving the stop at world position (x, y) as chips above it. */
-    fun setStopCallout(x: Float, y: Float, chips: List<Chip>) { calloutX = x; calloutY = y; calloutChips = chips; invalidate() }
+    fun setStopCallout(x: Float, y: Float, chips: List<Chip>) {
+        calloutX = x; calloutY = y; calloutChips = chips; calloutSel = null; calloutLines = emptyList(); invalidate()
+    }
+    /** Stop callout, one line picked: [sel] is ringed and [lines] (destination, times) shown under the chips. */
+    fun setCalloutDetail(sel: String?, lines: List<String>) { calloutSel = sel; calloutLines = lines; invalidate() }
+    private var calloutSel: String? = null
+    private var calloutLines: List<String> = emptyList()
+    private val calloutTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(20, 20, 20); textSize = 14 * dp; textAlign = Paint.Align.CENTER
+    }
+    private val chipSelRing = stroke(Color.rgb(20, 20, 20)).apply { strokeWidth = 3 * dp }
     fun clearStopCallout() { if (calloutChips != null) { calloutChips = null; chipHits.clear(); calloutRect.setEmpty(); invalidate() } }
     /** Long-press on the map: reports the world position and the POI hit, if any. */
     var onMapLongPress: ((lat: Double, lon: Double, poi: Poi?) -> Unit)? = null
@@ -644,15 +655,20 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             val active = activeRouteId == null || r.route.id == activeRouteId
             for (dl in r.lines) {
                 if (highContrast) {
-                    // white on a black casing so the line stands out from the white streets;
-                    // variant branches dashed
-                    val w = (if (active) 4f else 2.5f) * dp / scale
-                    hcCasing.strokeWidth = w + 4 * dp / scale
+                    // a fat white line broken by short black parts ("XXXX XXXX XXXX") on a thin
+                    // black border, so it stands out from the thin white streets; variant
+                    // branches thinner, with more black
+                    val w = (if (dl.branch || !active) 4f else 7f) * dp / scale
+                    hcCasing.strokeWidth = w + 3 * dp / scale
+                    hcCasing.strokeCap = Paint.Cap.BUTT
                     c.drawPath(dl.path, hcCasing)
+                    hcCasing.strokeCap = Paint.Cap.ROUND
                     routePaint.color = Color.WHITE; routePaint.alpha = 255; routePaint.strokeWidth = w
-                    routePaint.pathEffect = if (dl.branch) DashPathEffect(floatArrayOf(6 * dp / scale, 5 * dp / scale), 0f) else null
+                    routePaint.strokeCap = Paint.Cap.BUTT
+                    routePaint.pathEffect = if (dl.branch) DashPathEffect(floatArrayOf(8 * dp / scale, 5 * dp / scale), 0f)
+                        else DashPathEffect(floatArrayOf(18 * dp / scale, 4 * dp / scale), 0f)
                     c.drawPath(dl.path, routePaint)
-                    routePaint.pathEffect = null
+                    routePaint.pathEffect = null; routePaint.strokeCap = Paint.Cap.ROUND
                     continue
                 }
                 routePaint.color = dl.color
@@ -689,7 +705,10 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             if (highContrast) {
                 hcCasing.strokeWidth = (if (ip.walk) 7 else 10) * dp; c.drawPath(itinPathScreen, hcCasing)
                 itinBusPaint.color = Color.WHITE
-            } else itinBusPaint.color = ip.color
+                // the bus part like a route: fat white with short black parts
+                itinBusPaint.pathEffect = if (ip.walk) null else DashPathEffect(floatArrayOf(18 * dp, 4 * dp), 0f)
+                itinBusPaint.strokeCap = if (ip.walk) Paint.Cap.ROUND else Paint.Cap.BUTT
+            } else { itinBusPaint.color = ip.color; itinBusPaint.pathEffect = null; itinBusPaint.strokeCap = Paint.Cap.ROUND }
             c.drawPath(itinPathScreen, if (ip.walk) itinWalkPaint else itinBusPaint)
         }
         // ---- text labels (screen space, collision-avoided)
@@ -759,17 +778,9 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 pt[0] = s.x; pt[1] = s.y; matrix.mapPoints(pt)
                 val hl = s.id == nextStopId || s.id == destinationStopId || s.id == selectedStopId
                 val r = (if (hl) 7 else 4) * dp
-                s.heading?.let { hw ->  // arrow pointing in the served direction of bus travel
-                    val h = hw - rot   // compass bearing -> direction on the (rotated) screen
-                    val br = Math.toRadians(h.toDouble())
-                    val len = 3.4f * r
-                    val tx = pt[0] + len * sin(br).toFloat(); val ty = pt[1] - len * cos(br).toFloat()
-                    c.drawLine(pt[0], pt[1], tx, ty, stopRing)
-                    arrowPaint.color = accent
-                    drawArrow(c, tx, ty, h, (if (hl) 7 else 5) * dp)
-                }
                 stopFill.color = if (s.id == destinationStopId) accent else stopBase
-                c.drawCircle(pt[0], pt[1], r, stopFill); c.drawCircle(pt[0], pt[1], r, stopRing)
+                val bs = stopBearings[s.id] ?: s.heading?.let { floatArrayOf(it) } ?: NO_BEARINGS
+                drawStopGlyph(c, pt[0], pt[1], r, bs, stopFill, stopRing)
                 if (hl || s.id in stopLabelCells) c.drawText(s.mapName, pt[0] + r + 3 * dp, pt[1] + 4 * dp, label)
             }
         }
@@ -821,8 +832,13 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         }
         rows.add(row)
         fun widthOf(r: List<Pair<Chip, Float>>) = r.sumOf { it.second.toDouble() }.toFloat() + gap * (r.size - 1)
-        val blockW = rows.maxOf { widthOf(it) }
-        val blockH = rows.size * h + (rows.size - 1) * gap
+        val lineH = 19 * dp
+        calloutTextPaint.color = if (highContrast) Color.WHITE else Color.rgb(20, 20, 20)
+        chipSelRing.color = if (highContrast) Color.WHITE else Color.rgb(20, 20, 20)
+        val textW = calloutLines.maxOfOrNull { calloutTextPaint.measureText(it) } ?: 0f
+        val blockW = maxOf(rows.maxOf { widthOf(it) }, minOf(textW, width - 6 * pad))
+        val textH = if (calloutLines.isEmpty()) 0f else gap + calloutLines.size * lineH
+        val blockH = rows.size * h + (rows.size - 1) * gap + textH
         var top = sy - 16 * dp - blockH - pad            // above the stop ...
         if (top < pad + 30 * dp) top = sy + 16 * dp + pad  // ... or below it near the top edge
         val left = (sx - blockW / 2).coerceIn(2 * pad, maxOf(2 * pad, width - blockW - 2 * pad))
@@ -838,10 +854,20 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                 if (highContrast) c.drawRoundRect(rect, 5 * dp, 5 * dp, calloutEdge)
                 chipText.color = if (highContrast) Color.WHITE else ch.textColor
                 c.drawText(ch.code, x + w / 2, y + h / 2 + chipText.textSize * 0.36f, chipText)
+                if (ch.code == calloutSel) {
+                    val ring = android.graphics.RectF(rect.left - 2.5f * dp, rect.top - 2.5f * dp, rect.right + 2.5f * dp, rect.bottom + 2.5f * dp)
+                    c.drawRoundRect(ring, 7 * dp, 7 * dp, chipSelRing)
+                }
                 chipHits.add(ChipHit(ch.code, rect))
                 x += w + gap
             }
             y += h + gap
+        }
+        // the picked line: where it goes and when it leaves (tap the chip again for the line)
+        var ty = y - gap + gap + lineH * 0.75f
+        for ((i, t) in calloutLines.withIndex()) {
+            calloutTextPaint.isFakeBoldText = i == 0
+            c.drawText(t, left + blockW / 2, ty, calloutTextPaint); ty += lineH
         }
     }
 
@@ -908,7 +934,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     // ---------------- stops of the line on show: every stop clearly marked, with
     // an arrow for the way the bus leaves it. A stop and its same-name partner in
     // the other direction are drawn as one (no arrow) while they would overlap.
-    private class LineMark(var sx: Float, var sy: Float, val bearing: Float, val color: Int,
+    private class LineMark(var sx: Float, var sy: Float, val bearings: FloatArray, val color: Int,
                            val name: String, val ids: List<String>) { var labelled = false }
     private val lineMarks = ArrayList<LineMark>()
     private val lineStopIds = HashSet<String>()
@@ -936,31 +962,61 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
                     if (hypot(pt[0] - ax, pt[1] - ay) < PAIR_MERGE_DP * dp) {
                         // one marker for both directions, between the two stops
                         done[j] = true; lineStopIds.add(b.id)
-                        lineMarks += LineMark((ax + pt[0]) / 2, (ay + pt[1]) / 2, Float.NaN, a.color, a.label, listOf(a.id, b.id))
+                        lineMarks += LineMark((ax + pt[0]) / 2, (ay + pt[1]) / 2,
+                            Precalc.mergeBearings(listOf(a.bearing, b.bearing).filter { !it.isNaN() }), a.color, a.label, listOf(a.id, b.id))
                         done[i] = true
                         continue
                     }
                 }
                 done[i] = true
-                lineMarks += LineMark(ax, ay, a.bearing, a.color, a.label, listOf(a.id))
+                lineMarks += LineMark(ax, ay, if (a.bearing.isNaN()) NO_BEARINGS else floatArrayOf(a.bearing), a.color, a.label, listOf(a.id))
             }
         }
+    }
+
+    /**
+     * A stop: a circle with a triangle fused to it for every direction buses leave
+     * in, filled and outlined as one shape. Shapes are built north-up (bearings are
+     * compass bearings) and cached; the canvas turns them with the map.
+     */
+    private val glyphCache = HashMap<String, Path>()
+    private fun glyph(r: Float, bearings: FloatArray): Path {
+        val key = buildString {
+            append(r.toInt())
+            for (b in bearings) { append(','); append(((b / 5f).roundToInt() * 5) % 360) }
+        }
+        return glyphCache.getOrPut(key) {
+            val p = Path().apply { addCircle(0f, 0f, r, Path.Direction.CW) }
+            for (b in bearings) {
+                val a = Math.toRadians(b.toDouble())
+                val ux = sin(a).toFloat(); val uy = -cos(a).toFloat()     // screen: y down
+                val px = -uy; val py = ux                                  // perpendicular
+                val half = r * 0.82f; val base = r * 0.45f; val tip = r * 2.15f
+                val t = Path()
+                t.moveTo(ux * tip, uy * tip)
+                t.lineTo(ux * base + px * half, uy * base + py * half)
+                t.lineTo(ux * base - px * half, uy * base - py * half)
+                t.close()
+                p.op(t, Path.Op.UNION)
+            }
+            if (glyphCache.size > 400) glyphCache.clear()
+            p
+        }
+    }
+
+    private fun drawStopGlyph(c: Canvas, x: Float, y: Float, r: Float, bearings: FloatArray, fillP: Paint, ringP: Paint) {
+        if (bearings.isEmpty()) { c.drawCircle(x, y, r, fillP); c.drawCircle(x, y, r, ringP); return }
+        val g = glyph(r, bearings)
+        c.save(); c.translate(x, y); c.rotate(-rot)
+        c.drawPath(g, fillP); c.drawPath(g, ringP)
+        c.restore()
     }
 
     private fun drawLineStops(c: Canvas) {
         for (m in lineMarks) {
             if (m.sx < -20 * dp || m.sx > width + 20 * dp || m.sy < -20 * dp || m.sy > height + 20 * dp) continue
-            val pairR = 6.5f * dp; val oneR = 5f * dp
-            val r = if (m.bearing.isNaN()) pairR else oneR
-            if (!m.bearing.isNaN()) {
-                // departure arrow just outside the circle, in the line's colour
-                val h = m.bearing - rot
-                val br = Math.toRadians(h.toDouble())
-                val d = r + 7 * dp
-                arrowPaint.color = if (highContrast) Color.WHITE else m.color
-                drawArrow(c, m.sx + d * sin(br).toFloat(), m.sy - d * cos(br).toFloat(), h, 6 * dp)
-            }
-            c.drawCircle(m.sx, m.sy, r, lineStopFill); c.drawCircle(m.sx, m.sy, r, lineStopRing)
+            val r = (if (m.ids.size > 1) 6.5f else 5.5f) * dp
+            drawStopGlyph(c, m.sx, m.sy, r, m.bearings, lineStopFill, lineStopRing)
             if (m.labelled || m.ids.any { it == selectedStopId })
                 c.drawText(m.name, m.sx + r + 4 * dp, m.sy + 4 * dp, label)
         }
@@ -970,42 +1026,25 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     // stops are drawn as one circle with their count at their average position.
     // Clusters are built in world space per power-of-two zoom level, so they stay
     // put while panning and only regroup when the zoom crosses a level.
-    class Cluster(val x: Float, val y: Float, val stops: List<BusStop>,
-                  val x0: Float, val y0: Float, val x1: Float, val y1: Float)
-    private val clusterCache = HashMap<Int, List<Cluster>>()
-    private val clusterScreen = ArrayList<Pair<Cluster, FloatArray>>()   // last drawn: cluster, (x, y, r)
+    private val clusterCache = HashMap<Int, List<StopCluster>>()
+    private val clusterScreen = ArrayList<Pair<StopCluster, FloatArray>>()   // last drawn: cluster, (x, y, r)
     private val clusterFill = fill(Color.rgb(238, 0, 0))
     private val clusterRing = stroke(Color.WHITE).apply { strokeWidth = 2 * dp }
     private val clusterText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE; textAlign = Paint.Align.CENTER; isFakeBoldText = true; textSize = 10 * dp
     }
+    /** Departure directions per stop id (precalculated; see [Precalc]). */
+    private var stopBearings: Map<String, FloatArray> = emptyMap()
 
-    private fun clustersFor(level: Int): List<Cluster> = clusterCache.getOrPut(level) {
-        val cell = Math.pow(2.0, level.toDouble()).toFloat()
-        // 1) grid buckets of `cell` world units
-        val buckets = HashMap<Long, MutableList<BusStop>>()
-        for (st in stops) {
-            val k = (Math.floor((st.x / cell).toDouble()).toLong() shl 32) xor (Math.floor((st.y / cell).toDouble()).toLong() and 0xffffffffL)
-            buckets.getOrPut(k) { ArrayList() }.add(st)
-        }
-        // 2) merge buckets whose centres ended up closer than one cell (no overlapping circles),
-        //    biggest first so small groups join the big ones near them
-        val groups = buckets.values.map { it.toMutableList() }.sortedByDescending { it.size }.toMutableList()
-        fun cx(g: List<BusStop>) = g.sumOf { it.x.toDouble() }.toFloat() / g.size
-        fun cy(g: List<BusStop>) = g.sumOf { it.y.toDouble() }.toFloat() / g.size
-        val out = ArrayList<MutableList<BusStop>>()
-        val centres = ArrayList<FloatArray>()
-        for (g in groups) {
-            val gx = cx(g); val gy = cy(g)
-            val j = centres.indexOfFirst { hypot(it[0] - gx, it[1] - gy) < cell }
-            if (j >= 0) { out[j].addAll(g); centres[j] = floatArrayOf(cx(out[j]), cy(out[j])) }
-            else { out.add(g); centres.add(floatArrayOf(gx, gy)) }
-        }
-        out.mapIndexed { i, g ->
-            Cluster(centres[i][0], centres[i][1], g,
-                g.minOf { it.x }, g.minOf { it.y }, g.maxOf { it.x }, g.maxOf { it.y })
-        }
+    /** Take the precalculated stop groups and stop directions (call after setting [stops]). */
+    fun setPrecalc(p: Precalc) {
+        clusterCache.clear(); clusterCache.putAll(p.clusters)
+        stopBearings = p.bearings
+        invalidate()
     }
+
+    /** Groups for [level]: precalculated, or worked out now (and kept) if not there yet. */
+    private fun clustersFor(level: Int): List<StopCluster> = clusterCache.getOrPut(level) { StopCluster.compute(stops, level) }
 
     /** Just big enough for the number: two digits fit comfortably, four barely. */
     private fun clusterRadius(n: Int): Float {
@@ -1016,8 +1055,8 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     private fun drawClusters(c: Canvas, vx0: Float, vy0: Float, vx1: Float, vy1: Float) {
         clusterScreen.clear()
         if (stops.isEmpty()) return
-        // cell of ~72dp on screen, rounded to a power of two in world units
-        val level = kotlin.math.ceil(kotlin.math.ln((48 * dp / scale).toDouble()) / kotlin.math.ln(2.0)).toInt()
+        // cell of ~48dp on screen, rounded to a power of two in world units
+        val level = StopCluster.levelFor(scale, dp)
         val pad = 40 * dp / scale
         for (cl in clustersFor(level)) {
             if (cl.x < vx0 - pad || cl.x > vx1 + pad || cl.y < vy0 - pad || cl.y > vy1 + pad) continue
@@ -1030,12 +1069,12 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         }
     }
 
-    private fun clusterHit(sx: Float, sy: Float): Cluster? =
+    private fun clusterHit(sx: Float, sy: Float): StopCluster? =
         clusterScreen.filter { (_, p) -> hypot(p[0] - sx, p[1] - sy) < p[2] + 8 * dp }
             .minByOrNull { (_, p) -> hypot(p[0] - sx, p[1] - sy) }?.first
 
     /** Glide in until the cluster's stops fill the view: they show as stops or smaller clusters. */
-    private fun zoomToCluster(cl: Cluster) {
+    private fun zoomToCluster(cl: StopCluster) {
         val m = 56 * dp
         // at least twice as close, so a tap always opens the group up; at most street level
         fitBounds(cl.x0, cl.y0, cl.x1, cl.y1, m, m, m, m, minS = scale * 2f, maxS = 3f)
@@ -1043,6 +1082,8 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
 
     companion object {
         const val MIN_STOP_SCALE = 0.25f
+        const val MIN_SCALE_ALL = 0.01f   // = MIN_SCALE: whole islands
+        private val NO_BEARINGS = FloatArray(0)
         private const val ARROW_SPACING_DP = 140f   // one direction arrow per this much line on screen
         private const val LINE_STOP_LABEL_SCALE = 0.35f
         private const val PAIR_MERGE_DP = 26f   // closer than this on screen: draw the pair as one

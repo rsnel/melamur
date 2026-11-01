@@ -25,6 +25,11 @@
     <string name="cd_text">Text view</string>
     <string name="cd_menu">Menu</string>
     <string name="line_fit">Show whole line</string>
+    <string name="precalc_busy">Preparing the map for this database (only once)…</string>
+    <string name="precalc_done">Map prepared</string>
+    <string name="back_again">Press back again to leave MelaMur</string>
+    <string name="callout_tap_again">Tap the number again to show the line</string>
+    <string name="text_stop_all_lines">All lines at this stop</string>
     <string name="cd_switch_view">Switch between map and text</string>
     <string name="hint_swipe_to_text">Pull from the left or right edge for the text view</string>
     <string name="hint_swipe_to_map">Pull from the left or right edge for the map</string>
