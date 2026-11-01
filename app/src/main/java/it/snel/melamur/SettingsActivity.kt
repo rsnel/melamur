@@ -27,6 +27,8 @@ class SettingsActivity : Activity() {
     private val d by lazy { resources.displayMetrics.density }
     private fun px(v: Float) = (v * d).toInt()
 
+    override fun attachBaseContext(base: android.content.Context) = super.attachBaseContext(Lang.wrap(base))
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         HighContrast.apply(this, window)

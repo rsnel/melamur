@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Flag of Malta (simplified): white and red halves, the George Cross in the canton -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="36dp" android:height="24dp" android:viewportWidth="60" android:viewportHeight="40">
+    <path android:fillColor="#FFFFFF" android:pathData="M0,0h30v40h-30z" />
+    <path android:fillColor="#CF142B" android:pathData="M30,0h30v40h-30z" />
+    <path android:fillColor="#9A9A9A" android:strokeColor="#CF142B" android:strokeWidth="0.8"
+        android:pathData="M6.5,2.5h3v4h4v3h-4v4h-3v-4h-4v-3h4z" />
+    <path android:strokeColor="#9A9A9A" android:strokeWidth="1" android:pathData="M0,0h60v40h-60z" />
+</vector>

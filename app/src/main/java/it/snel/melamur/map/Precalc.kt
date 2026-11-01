@@ -101,14 +101,14 @@ class Precalc(
             val codes = db.allLines(v).map { it.code }
             val lines = HashMap<String, RouteGfx>()
             for ((i, code) in codes.withIndex()) {
-                if (i % 5 == 0) progress("Line ${i + 1} of ${codes.size}")
+                if (i % 5 == 0) progress(it.snel.melamur.T.s(it.snel.melamur.R.string.precalc_line, i + 1, codes.size))
                 val g = RouteRenderer.fromDb(db, code, v, byId)
                 lines[code] = g
                 for (s in g.stops) if (!s.bearing.isNaN()) raw.getOrPut(s.id) { ArrayList() }.add(s.bearing)
             }
             val bearings = raw.mapValues { (_, bs) -> mergeBearings(bs) }
             // 2) stop groups for every zoom level that shows them
-            progress("Grouping stops for the zoomed-out map")
+            progress(it.snel.melamur.T.s(it.snel.melamur.R.string.precalc_groups))
             val clusters = HashMap<Int, List<StopCluster>>()
             for (level in StopCluster.levels(density)) clusters[level] = StopCluster.compute(stops, level)
             return Precalc(bearings, clusters, lines)

@@ -88,6 +88,8 @@ class NavigationService : Service(), LocationListener {
     private var messageId = 0
     private var message = ""
 
+    override fun attachBaseContext(base: Context) = super.attachBaseContext(it.snel.melamur.Lang.wrap(base))
+
     override fun onBind(i: Intent?) = null
 
     override fun onCreate() {

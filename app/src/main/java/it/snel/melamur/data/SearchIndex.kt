@@ -78,9 +78,9 @@ object SearchIndex {
         for (s in stops) e.add(Entry(
             fold("${s.name} ${s.locality ?: ""} ${s.number}"), s.number, 0,
             SearchResult(SearchResult.Kind.STOP, s.display,
-                "Stop #${s.number}" + (s.locality?.let { " · $it" } ?: ""), s.lat, s.lon, s.number)))
+                it.snel.melamur.T.s(it.snel.melamur.R.string.stop_number, s.number.toString()) + (s.locality?.let { " · $it" } ?: ""), s.lat, s.lon, s.number)))
         for (p in pois) e.add(Entry(fold(p.name), null, 1,
-            SearchResult(SearchResult.Kind.POI, p.name, "Saved place", p.lat, p.lon)))
+            SearchResult(SearchResult.Kind.POI, p.name, it.snel.melamur.T.s(it.snel.melamur.R.string.saved_place), p.lat, p.lon)))
         for (p in landmarks) {
             val muni = municipality(p.x, p.y)
             e.add(Entry(fold("${p.name} ${muni ?: ""}"), null, 2,

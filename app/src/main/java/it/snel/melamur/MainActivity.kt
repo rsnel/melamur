@@ -58,7 +58,7 @@ class MainActivity : Activity(), LocationListener {
     private val prefs by lazy { getSharedPreferences("melamur", MODE_PRIVATE) }
     private val hasConsent get() = prefs.getLong("consent_at", 0L) > 0L
     private val navListener = { render() }
-    private val fmt = DateTimeFormatter.ofPattern("EEE d MMM HH:mm")
+    private val fmt by lazy { DateTimeFormatter.ofPattern("EEE d MMM HH:mm", java.util.Locale.getDefault()) }
 
     // data
     private var allStops: List<Stop> = emptyList()
@@ -164,9 +164,20 @@ class MainActivity : Activity(), LocationListener {
     private val tabOff = Color.rgb(60, 60, 60)
     private val iconOff = Color.rgb(150, 150, 150)
 
+    override fun attachBaseContext(base: android.content.Context) = super.attachBaseContext(Lang.wrap(base))
+
+    override fun onSaveInstanceState(out: Bundle) {
+        super.onSaveInstanceState(out)
+        out.putString("mode", mode.name); out.putString("view", viewKind.name)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        savedInstanceState?.let { b ->
+            b.getString("mode")?.let { m -> runCatching { mode = Mode.valueOf(m) } }
+            b.getString("view")?.let { v -> runCatching { viewKind = ViewKind.valueOf(v) } }
+        }
         map = findViewById(R.id.map)
         status = findViewById(R.id.status); nextStop = findViewById(R.id.nextStop)
         destination = findViewById(R.id.destination); alert = findViewById(R.id.alert)
@@ -184,7 +195,7 @@ class MainActivity : Activity(), LocationListener {
         // center-me cycles as in Google Maps: go to me and follow -> heading-up -> north-up follow
         centerBtn.setOnClickListener {
             when {
-                !map.follow -> if (!map.centerOnMe()) Toast.makeText(this, "Waiting for your location…", Toast.LENGTH_SHORT).show()
+                !map.follow -> if (!map.centerOnMe()) Toast.makeText(this, R.string.wait_location, Toast.LENGTH_SHORT).show()
                 !map.headingUp -> map.setHeadingUpMode(true)
                 else -> map.setHeadingUpMode(false)
             }
@@ -227,6 +238,16 @@ class MainActivity : Activity(), LocationListener {
         tabExplore.setOnClickListener { setMode(Mode.EXPLORE) }
         tabNavigate.setOnClickListener { setMode(Mode.NAVIGATE) }
         tabMisc.setOnClickListener { showMisc() }
+        // the flag of the language in use; tapping switches Malti <-> English and redraws the screen
+        findViewById<ImageButton>(R.id.langFlag).apply {
+            val en = Lang.current(this@MainActivity) == Lang.EN
+            setImageResource(if (en) R.drawable.flag_gb else R.drawable.flag_mt)
+            contentDescription = getString(R.string.cd_language, getString(R.string.lang_name))
+            setOnClickListener {
+                Lang.set(this@MainActivity, if (en) Lang.MT else Lang.EN)
+                recreate()
+            }
+        }
         tabMisc.imageTintList = ColorStateList.valueOf(iconOff)
         findViewById<Button>(R.id.swapEnds).setOnClickListener { swapEndpoints() }
         timeBtn.setOnClickListener { pickDateTime { departWhen = it; refreshTimeLabel() } }
@@ -608,8 +629,8 @@ class MainActivity : Activity(), LocationListener {
                 val towards = deps.firstOrNull()?.towards ?: db.directionNames(pick, v)[pickDir] ?: ""
                 val a = deps.getOrNull(0); val b = deps.getOrNull(1)
                 listOf("$pick  →  $towards",
-                    if (a == null) "No more departures today"
-                    else "${Malta.hhmm(a.minutes)} (${minsFrom(now, a)})" + (b?.let { "  ·  then ${Malta.hhmm(it.minutes)}" } ?: "  ·  last today"))
+                    if (a == null) getString(R.string.no_more_today)
+                    else "${Malta.hhmm(a.minutes)} (${minsFrom(now, a)})" + (b?.let { "  ·  " + getString(R.string.then_at, Malta.hhmm(it.minutes)) } ?: "  ·  " + getString(R.string.last_today)))
             }
             runOnUiThread {
                 // still the same selection?
@@ -624,7 +645,7 @@ class MainActivity : Activity(), LocationListener {
 
     private fun minsFrom(now: LocalDateTime, d: Departure): String {
         val m = java.time.Duration.between(now, d.time).toMinutes()
-        return if (m <= 0) "now" else "in $m min"
+        return if (m <= 0) getString(R.string.now) else getString(R.string.in_min, m.toInt())
     }
 
     /** Black or white text, whichever reads better on [bg]. */
@@ -704,13 +725,13 @@ class MainActivity : Activity(), LocationListener {
                     is BusLeg -> byNum[l.boardNumber]?.let { it.x to it.y } ?: (Float.NaN to Float.NaN)
                     else -> Float.NaN to Float.NaN
                 }
-                if (!x.isNaN() && l is WalkLeg) labels += MapView.ItinLabel(x, y, "${hm(itin.departMinutes)} start")
+                if (!x.isNaN() && l is WalkLeg) labels += MapView.ItinLabel(x, y, getString(R.string.tag_start, hm(itin.departMinutes)))
             }
             for (l in itin.busLegs) {
-                byNum[l.boardNumber]?.let { labels += MapView.ItinLabel(it.x, it.y, "${hm(l.boardMinutes)}  bus ${l.routeCode}") }
-                byNum[l.alightNumber]?.let { labels += MapView.ItinLabel(it.x, it.y, "${hm(l.alightMinutes)}  off") }
+                byNum[l.boardNumber]?.let { labels += MapView.ItinLabel(it.x, it.y, getString(R.string.tag_bus, hm(l.boardMinutes), l.routeCode)) }
+                byNum[l.alightNumber]?.let { labels += MapView.ItinLabel(it.x, it.y, getString(R.string.tag_off, hm(l.alightMinutes))) }
             }
-            (itin.legs.lastOrNull() as? WalkLeg)?.let { labels += MapView.ItinLabel(Geo.x(it.toLon), Geo.y(it.toLat), "${hm(itin.arriveMinutes)}  arrive") }
+            (itin.legs.lastOrNull() as? WalkLeg)?.let { labels += MapView.ItinLabel(Geo.x(it.toLon), Geo.y(it.toLat), getString(R.string.tag_arrive, hm(itin.arriveMinutes))) }
             // extent, to zoom to a newly shown option
             val rb = android.graphics.RectF(); val tmp = android.graphics.RectF(); var any = false
             for (p in paths) { p.path.computeBounds(tmp, true); if (!any) { rb.set(tmp); any = true } else rb.union(tmp) }
@@ -822,7 +843,7 @@ class MainActivity : Activity(), LocationListener {
             for (d in dirs) {
                 val vs = lv.byId.values.filter { it.directionIndex == d.directionIndex }
                     .sortedWith(compareBy({ !it.main }, { it.variant }))
-                opts += Triple("→ ${d.name}" + if (vs.size > 1) "  (all variants)" else "", d.directionIndex, null)
+                opts += Triple("→ ${d.name}" + if (vs.size > 1) "  " + getString(R.string.all_variants_short) else "", d.directionIndex, null)
                 if (vs.size > 1) for (x in vs)
                     opts += Triple("      ${lv.label(x.id)}", d.directionIndex, x.id)
             }
@@ -843,11 +864,11 @@ class MainActivity : Activity(), LocationListener {
                 val any = opts.size > 1
                 flip.isEnabled = any; flip.alpha = if (any) 1f else 0.35f
                 textContent.addView(tv("$code  →  ${dir?.name ?: ""}", col, 18f, true))
-                if (chosen != null) textContent.addView(tv("Variant: ${lv.label(chosen.id)}", white, 14f, true))
-                else if (variants.size > 1) textContent.addView(tv("All ${variants.size} variants: ${variants.joinToString("  ·  ")}", grey, 13f))
-                val headway = gap?.let { "   ·   next bus in $it min" } ?: if (trip != null) "   ·   last trip" else ""
-                textContent.addView(tv("Trip departing ${trip?.let { Malta.hhmm(it.second) } ?: "—"}$headway", grey, 13f))
-                if (thisTrip.isNotEmpty() && chosen == null) textContent.addView(tv("This trip: $thisTrip", white, 14f, true))
+                if (chosen != null) textContent.addView(tv(getString(R.string.variant_is, lv.label(chosen.id)), white, 14f, true))
+                else if (variants.size > 1) textContent.addView(tv(getString(R.string.all_variants, variants.size, variants.joinToString("  ·  ")), grey, 13f))
+                val headway = gap?.let { "   ·   " + getString(R.string.headway_next, it) } ?: if (trip != null) "   ·   " + getString(R.string.last_trip) else ""
+                textContent.addView(tv(getString(R.string.trip_departing, trip?.let { Malta.hhmm(it.second) } ?: "—") + headway, grey, 13f))
+                if (thisTrip.isNotEmpty() && chosen == null) textContent.addView(tv(getString(R.string.this_trip, thisTrip), white, 14f, true))
                 for (s in stops) {
                     val stop = s.number?.let { byNum[it] }
                     val nm = stop?.display ?: s.name
@@ -856,7 +877,7 @@ class MainActivity : Activity(), LocationListener {
                     if (stop != null) row.setOnClickListener { selectStop(stop, moveCamera = true, line = code, dir = di) }
                     textContent.addView(row)
                 }
-                if (stops.isEmpty()) textContent.addView(tv("No trips found for this time.", grey))
+                if (stops.isEmpty()) textContent.addView(tv(getString(R.string.no_trips), grey))
             }
         }.start()
     }
@@ -868,9 +889,9 @@ class MainActivity : Activity(), LocationListener {
     private fun buildPointText() {
         val useMe = pointLat == null
         val la = if (useMe) myLat else pointLat; val lo = if (useMe) myLon else pointLon
-        textContent.addView(tv(if (useMe) "Your position" else "Selected point", white, 17f, true))
+        textContent.addView(tv(getString(if (useMe) R.string.nav_here else R.string.selected_point), white, 17f, true))
         if (la == null || lo == null) {
-            textContent.addView(tv("Tap the map to pick a point, or wait for your location.", grey))
+            textContent.addView(tv(getString(R.string.point_hint), grey))
             textContent.addView(smallBtn(getString(R.string.text_all_lines)) { showAllLines() })
             return
         }
@@ -884,20 +905,20 @@ class MainActivity : Activity(), LocationListener {
         val locality = nearStop?.locality ?: places.minByOrNull { d(it.x, it.y) }?.name
         val street = streets.minByOrNull { d(it.x, it.y) }
         val where = listOfNotNull(street?.name, locality).joinToString(", ")
-        if (where.isNotEmpty()) textContent.addView(tv("Nearby: $where", white, 15f))
+        if (where.isNotEmpty()) textContent.addView(tv(getString(R.string.nearby, where), white, 15f))
         landmarks.minByOrNull { d(it.x, it.y) }?.let { lm ->
-            textContent.addView(tv("Landmark: ${lm.name}  (${dist(d(lm.x, lm.y))})", white, 15f).apply {
+            textContent.addView(tv(getString(R.string.landmark, lm.name, dist(d(lm.x, lm.y))), white, 15f).apply {
                 setOnClickListener { selectPoint(Geo.lat(lm.y).toDouble(), Geo.lon(lm.x).toDouble()) }
             })
         }
-        textContent.addView(tv("Nearest stops", white, 16f, true))
+        textContent.addView(tv(getString(R.string.nearest_stops), white, 16f, true))
         for (s in allStops.sortedBy { d(it.x, it.y) }.take(3))
             textContent.addView(clickRow(emptyList(), s.display, "#${s.number}  ·  ${dist(d(s.x, s.y))}") {
                 selectStop(s, moveCamera = true)
             })
         val row = LinearLayout(this)
         row.addView(smallBtn(getString(R.string.text_all_lines)) { showAllLines() })
-        if (!useMe) row.addView(smallBtn("Use my position") { selectPoint(null, null) })
+        if (!useMe) row.addView(smallBtn(getString(R.string.use_my_position)) { selectPoint(null, null) })
         textContent.addView(row)
     }
 
@@ -905,13 +926,13 @@ class MainActivity : Activity(), LocationListener {
     private fun buildStopText() {
         val stop = selectedStop
         if (stop == null) {
-            textContent.addView(tv("Tap a stop on the map to see its departures.", grey))
+            textContent.addView(tv(getString(R.string.stop_hint), grey))
             textContent.addView(smallBtn(getString(R.string.text_all_lines)) { showAllLines() })
             return
         }
         val db = DbManager.db ?: return
         textContent.addView(tv(stop.display, white, 17f, true))
-        textContent.addView(tv("Stop #${stop.number}", grey, 13f))
+        textContent.addView(tv(getString(R.string.stop_number, stop.number.toString()), grey, 13f))
         stopLine?.let { buildStopLineText(db, stop, it, stopLineDir); return }
         textContent.addView(smallBtn(getString(R.string.text_all_lines)) { showAllLines() })
         val gen = textGen
@@ -937,15 +958,15 @@ class MainActivity : Activity(), LocationListener {
                 for (r in rows) {
                     val a = r[0]; val b = r.getOrNull(1)
                     val mins = java.time.Duration.between(now, a.time).toMinutes()
-                    val next = "${Malta.hhmm(a.minutes)} (${if (mins <= 0) "now" else "in $mins min"})"
-                    val then = b?.let { "  ·  then ${Malta.hhmm(it.minutes)}" } ?: "  ·  last today"
+                    val next = "${Malta.hhmm(a.minutes)} (${minsFrom(now, a)})"
+                    val then = b?.let { "  ·  " + getString(R.string.then_at, Malta.hhmm(it.minutes)) } ?: "  ·  " + getString(R.string.last_today)
                     val vl = variantLabel[a.tripId].orEmpty().let { if (it.isEmpty()) "" else "  ·  $it" }
                     textContent.addView(clickRow(listOf(lineColors(a.routeCode, white)),
                         "${a.routeCode}  →  ${a.towards}$vl", next + then) { pickStopLine(a.routeCode, a.directionIndex) })
                 }
                 for (l in idle) textContent.addView(clickRow(listOf(lineColors(l.code, l.color)), l.code,
-                    "no more departures today") { pickStopLine(l.code, stopLineDirs[l.code] ?: 0) })
-                if (rows.isEmpty() && idle.isEmpty()) textContent.addView(tv("No lines serve this stop.", grey))
+                    getString(R.string.no_more_today)) { pickStopLine(l.code, stopLineDirs[l.code] ?: 0) })
+                if (rows.isEmpty() && idle.isEmpty()) textContent.addView(tv(getString(R.string.no_lines_here), grey))
             }
         }.start()
     }
@@ -973,11 +994,11 @@ class MainActivity : Activity(), LocationListener {
                 if (gen != textGen) return@runOnUiThread
                 val next = deps.getOrNull(nextIdx)
                 textContent.addView(clickRow(listOf(lineColors(code, col)), "$code  →  $towards",
-                    next?.let { "Next ${Malta.hhmm(it.minutes)} (${minsFrom(now, it)})  ·  tap a time for the whole run" }
-                        ?: "No more departures today") {
+                    next?.let { getString(R.string.next_tap_time, Malta.hhmm(it.minutes), minsFrom(now, it)) }
+                        ?: getString(R.string.no_more_today)) {
                     selectLine(code, dir, trip = (next ?: deps.lastOrNull())?.tripId)
                 })
-                if (deps.isEmpty()) { textContent.addView(tv("No departures today.", grey)); return@runOnUiThread }
+                if (deps.isEmpty()) { textContent.addView(tv(getString(R.string.no_departures_today), grey)); return@runOnUiThread }
                 // the times in rows of five; past ones grey, the next one bold
                 val d = resources.displayMetrics.density
                 var row: LinearLayout? = null
@@ -1026,13 +1047,13 @@ class MainActivity : Activity(), LocationListener {
         val itin = currentItinerary
         if (itin == null) {
             textContent.addView(tv(getString(R.string.text_no_route), grey))
-            textContent.addView(tv("Set from and to above, then tap Plan.", grey, 13f))
+            textContent.addView(tv(getString(R.string.set_from_to), grey, 13f))
             return
         }
         textContent.addView(tv(if (navState == NavState.OPTIONS) getString(R.string.nav_option, optIdx + 1, planOptions.size)
             else getString(R.string.text_route), white, 17f, true))
         textContent.addView(tv("${Malta.hhmm(itin.departMinutes)} → ${Malta.hhmm(itin.arriveMinutes)}  (${itin.arriveMinutes - itin.departMinutes} min)", grey, 14f))
-        textContent.addView(smallBtn(if (showLegStops) "Hide stops" else "Show stops") {
+        textContent.addView(smallBtn(getString(if (showLegStops) R.string.hide_stops else R.string.show_stops)) {
             showLegStops = !showLegStops; buildTextPanel()
         })
         val db = DbManager.db
@@ -1076,7 +1097,7 @@ class MainActivity : Activity(), LocationListener {
             is WalkLeg -> {
                 val m = Preloader.walkGraph?.route(leg.fromLat, leg.fromLon, leg.toLat, leg.toLon)?.meters?.toInt()
                     ?: leg.meters
-                textContent.addView(tv("Walk $m m to ${leg.toName}", white, 15f))
+                textContent.addView(tv(getString(R.string.walk_to_m, m, leg.toName), white, 15f))
             }
             is BusLeg -> {
                 // which version of the line this bus is, if the line has several in this direction
@@ -1289,10 +1310,10 @@ class MainActivity : Activity(), LocationListener {
                 val pad = (12 * resources.displayMetrics.density).toInt()
                 val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
                 var dlg: AlertDialog? = null
-                if (rows.isEmpty()) box.addView(tv("No departures from this stop today.", grey))
+                if (rows.isEmpty()) box.addView(tv(getString(R.string.no_deps_stop_today), grey))
                 for (d in rows) {
                     val mins = java.time.Duration.between(now, d.time).toMinutes()
-                    val cd = if (mins <= 0) "now" else "in $mins min"
+                    val cd = if (mins <= 0) getString(R.string.now) else getString(R.string.in_min, mins.toInt())
                     box.addView(clickRow(listOf(lineColors(d.routeCode, colorOf[d.routeCode] ?: white)),
                         "${d.routeCode}    →  ${d.towards}", "${Malta.hhmm(d.minutes)}    ·    $cd") {
                         selectLine(d.routeCode, d.directionIndex); dlg?.dismiss()
@@ -1349,7 +1370,7 @@ class MainActivity : Activity(), LocationListener {
         // Navigate: no menu — the point fills a from/to slot directly.
         if (mode == Mode.NAVIGATE) { placeFromMap(lat, lon, poi); return }
         // Explore: manage saved places, plus navigate-from / navigate-to.
-        val place = Place(poi?.name ?: "Dropped pin", poi?.lat ?: lat, poi?.lon ?: lon)
+        val place = Place(poi?.name ?: getString(R.string.dropped_pin), poi?.lat ?: lat, poi?.lon ?: lon)
         if (poi == null) {
             val items = arrayOf(getString(R.string.poi_store), getString(R.string.nav_from), getString(R.string.nav_to))
             HcDialog(this).setItems(items) { _, w ->
@@ -1379,7 +1400,7 @@ class MainActivity : Activity(), LocationListener {
 
     /** Navigate: a long-pressed point goes to the focused field, else the first empty slot. */
     private fun placeFromMap(lat: Double, lon: Double, poi: Poi?) {
-        val place = Place(poi?.name ?: "Dropped pin", poi?.lat ?: lat, poi?.lon ?: lon)
+        val place = Place(poi?.name ?: getString(R.string.dropped_pin), poi?.lat ?: lat, poi?.lon ?: lon)
         when {
             searchTarget == SearchTarget.START -> { setFrom(place); toast("From: ${place.name}") }
             searchTarget == SearchTarget.END -> { setTo(place); toast("To: ${place.name}") }
@@ -1615,8 +1636,8 @@ class MainActivity : Activity(), LocationListener {
 
     private fun summary(it: Itinerary): String = it.legs.joinToString("  ›  ") { leg ->
         when (leg) {
-            is WalkLeg -> "walk ${leg.meters}m"
-            is BusLeg -> "bus ${leg.routeCode}"
+            is WalkLeg -> getString(R.string.sum_walk, leg.meters)
+            is BusLeg -> getString(R.string.sum_bus, leg.routeCode)
             else -> ""
         }
     }
@@ -1635,7 +1656,7 @@ class MainActivity : Activity(), LocationListener {
 
     // ---------------- navigation
     private fun startNavigation(itin: Itinerary, simulate: Boolean) {
-        if (!simulate && !ensureLocation()) { toast("Location permission needed"); return }
+        if (!simulate && !ensureLocation()) { toast(getString(R.string.location_needed)); return }
         lastItinerary = itin; currentItinerary = itin; navState = NavState.SELECTED
         NavHub.itinerary = itin
         NavHub.to = to ?: itin.legs.lastOrNull()?.let { l ->

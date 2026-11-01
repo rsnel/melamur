@@ -66,6 +66,8 @@ class TrackingService : Service(), LocationListener {
     private var busNetwork: Network? = null
     private var wasOffRoute = false
 
+    override fun attachBaseContext(base: Context) = super.attachBaseContext(it.snel.melamur.Lang.wrap(base))
+
     override fun onBind(i: Intent?) = null
 
     override fun onCreate() {

@@ -16,6 +16,12 @@
             <Button android:id="@+id/tabNavigate" style="@style/MmButton"
                 android:layout_width="0dp" android:layout_height="42dp"
                 android:layout_weight="1" android:text="@string/tab_navigate" />
+            <!-- language: the current one's flag; tap to switch Malti / English -->
+            <ImageButton android:id="@+id/langFlag"
+                android:layout_width="44dp" android:layout_height="42dp"
+                android:layout_marginStart="6dp" android:padding="6dp"
+                android:background="@android:color/transparent" android:scaleType="fitCenter"
+                android:src="@drawable/flag_mt" />
             <ImageButton android:id="@+id/tabMisc"
                 android:layout_width="42dp" android:layout_height="42dp"
                 android:layout_marginStart="6dp"

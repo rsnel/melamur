@@ -3,6 +3,7 @@ package it.snel.melamur.update
 import android.app.Activity
 import android.app.AlertDialog
 import it.snel.melamur.HcDialog
+import it.snel.melamur.R
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
@@ -28,13 +29,13 @@ class UpdateFlow(private val act: Activity) {
         HcDialog(act).setTitle(title).setMessage(msg ?: "").setPositiveButton(android.R.string.ok, null).show()
 
     fun start() {
-        Toast.makeText(act, "Checking for updates…", Toast.LENGTH_SHORT).show()
+        Toast.makeText(act, R.string.upd_checking, Toast.LENGTH_SHORT).show()
         Thread {
             val r = Updater.check(token)
             ui {
                 when (r) {
-                    is Updater.Result.UpToDate -> alert("No update", "${r.message}\n\nInstalled: ${Updater.installedLabel()}")
-                    is Updater.Result.Failed -> alert("Update check failed", r.message)
+                    is Updater.Result.UpToDate -> alert(act.getString(R.string.upd_none), r.message + "\n\n" + act.getString(R.string.upd_installed, Updater.installedLabel()))
+                    is Updater.Result.Failed -> alert(act.getString(R.string.upd_check_failed), r.message)
                     is Updater.Result.Update -> offer(r.available)
                 }
             }
@@ -42,21 +43,21 @@ class UpdateFlow(private val act: Activity) {
     }
 
     private fun offer(a: Updater.Available) {
-        HcDialog(act).setTitle("${a.title} is available")
-            .setMessage("${a.details}\n\nInstalled: ${Updater.installedLabel()}")
-            .setPositiveButton("Install") { _, _ -> proceed(a) }
-            .setNegativeButton("Later", null).show()
+        HcDialog(act).setTitle(act.getString(R.string.upd_available, a.title))
+            .setMessage(a.details + "\n\n" + act.getString(R.string.upd_installed, Updater.installedLabel()))
+            .setPositiveButton(R.string.upd_install) { _, _ -> proceed(a) }
+            .setNegativeButton(R.string.upd_later, null).show()
     }
 
     private fun proceed(a: Updater.Available) {
         if (a.needsToken && token == null) { askToken(null) { proceed(a) }; return }
         if (!act.packageManager.canRequestPackageInstalls()) {
-            HcDialog(act).setTitle("Allow installing updates")
-                .setMessage("Android asks once whether MelaMur may install apps. Turn it on, come back, and tap Check for updates again.")
-                .setPositiveButton("Open settings") { _, _ ->
+            HcDialog(act).setTitle(R.string.upd_allow_title)
+                .setMessage(R.string.upd_allow_text)
+                .setPositiveButton(R.string.upd_open_settings) { _, _ ->
                     act.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${act.packageName}")))
                 }
-                .setNegativeButton("Cancel", null).show()
+                .setNegativeButton(android.R.string.cancel, null).show()
             return
         }
         download(a)
@@ -68,7 +69,7 @@ class UpdateFlow(private val act: Activity) {
         val box = LinearLayout(act).apply {
             orientation = LinearLayout.VERTICAL; val p = (20 * d).toInt(); setPadding(p, p, p, p); addView(bar)
         }
-        val dlg = HcDialog(act).setTitle("Downloading ${a.title}…").setView(box).setCancelable(false).show()
+        val dlg = HcDialog(act).setTitle(act.getString(R.string.upd_downloading, a.title)).setView(box).setCancelable(false).show()
         Thread {
             try {
                 val apk = Updater.download(a, token, File(act.cacheDir, "update")) { done, total ->
@@ -77,9 +78,9 @@ class UpdateFlow(private val act: Activity) {
                 Updater.install(act, apk)   // Android now shows its own "Update this app?" screen
                 ui { dlg.dismiss() }
             } catch (e: Updater.AuthException) {
-                ui { dlg.dismiss(); askToken("GitHub did not accept the token.") { proceed(a) } }
+                ui { dlg.dismiss(); askToken(act.getString(R.string.upd_token_rejected)) { proceed(a) } }
             } catch (e: Exception) {
-                ui { dlg.dismiss(); alert("Update failed", e.message) }
+                ui { dlg.dismiss(); alert(act.getString(R.string.upd_failed), e.message) }
             }
         }.start()
     }
@@ -96,19 +97,17 @@ class UpdateFlow(private val act: Activity) {
             addView(TextView(act).apply {
                 setTextColor(Color.rgb(176, 176, 176))
                 text = (problem?.let { "$it\n\n" } ?: "") +
-                    "GitHub only lets signed-in users download debug builds. Paste a GitHub token once; " +
-                    "a fine-grained token with read-only access to public repositories is enough. " +
-                    "It is kept only on this phone."
+                    act.getString(R.string.upd_token_text)
             })
             addView(input)
         }
-        val b = HcDialog(act).setTitle("GitHub token").setView(box)
-            .setPositiveButton("Save") { _, _ ->
+        val b = HcDialog(act).setTitle(R.string.upd_token_title).setView(box)
+            .setPositiveButton(R.string.upd_save) { _, _ ->
                 val t = input.text.toString().trim()
                 if (t.isNotEmpty()) { token = t; onSaved() }
             }
-            .setNegativeButton("Cancel", null)
-        if (token != null) b.setNeutralButton("Remove token") { _, _ -> token = null }
+            .setNegativeButton(android.R.string.cancel, null)
+        if (token != null) b.setNeutralButton(R.string.upd_remove_token) { _, _ -> token = null }
         b.show()
     }
 }

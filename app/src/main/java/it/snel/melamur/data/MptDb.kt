@@ -3,6 +3,8 @@ package it.snel.melamur.data
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.Color
+import it.snel.melamur.R
+import it.snel.melamur.T
 import it.snel.melamur.map.Geo
 import it.snel.melamur.map.Polyline
 import java.io.File
@@ -188,7 +190,7 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
     }
     private val variantCache = HashMap<String, LineVariants>()
     fun lineVariants(code: String, v: Int): LineVariants = synchronized(variantCache) {
-        variantCache.getOrPut("$code/$v") {
+        variantCache.getOrPut("$code/$v/${T.tag}") {
             val vs = variants(code, v)
             LineVariants(vs.associateBy { it.id }, variantLabels(vs, variantStopNames(vs.map { it.id })))
         }
@@ -386,22 +388,22 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
                 for (x in group) {
                     val parts = ArrayList<String>()
                     if (x === main) {
-                        clean(x.via)?.let { parts += "via $it" }
-                        if (x.express) parts += "express"
-                        if (parts.isEmpty()) parts += "usual route"
+                        clean(x.via)?.let { parts += T.s(R.string.var_via, it) }
+                        if (x.express) parts += T.s(R.string.var_express)
+                        if (parts.isEmpty()) parts += T.s(R.string.var_usual)
                         out[x.id] = parts.joinToString(", "); continue
                     }
-                    if (norm(x.origin) != norm(main.origin)) clean(x.origin)?.let { parts += "from $it" }
+                    if (norm(x.origin) != norm(main.origin)) clean(x.origin)?.let { parts += T.s(R.string.var_from, it) }
                     if (norm(x.destination) != norm(main.destination)) clean(x.destination)?.let { d ->
                         // ends at a stop the main route passes: it turns back early
                         val i = mainStops.indexOf(norm(d))
-                        parts += if (i in 0 until mainStops.size - 1) "no further than $d" else "to $d"
+                        parts += if (i in 0 until mainStops.size - 1) T.s(R.string.var_no_further, d) else T.s(R.string.var_to, d)
                     }
                     if (norm(x.via) != norm(main.via)) {
                         val v = clean(x.via)
-                        if (v != null) parts += "via $v" else clean(main.via)?.let { parts += "not via $it" }
+                        if (v != null) parts += T.s(R.string.var_via, v) else clean(main.via)?.let { parts += T.s(R.string.var_not_via, it) }
                     }
-                    if (x.express && !main.express) parts += "express"
+                    if (x.express && !main.express) parts += T.s(R.string.var_express)
                     out[x.id] = parts.joinToString(", ")
                 }
                 // still alike: tell them apart by their stops
@@ -412,9 +414,9 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
                         val otherKeys = others.map { norm(it) }.toSet(); val mineKeys = mine.map { norm(it) }.toSet()
                         val only = mine.firstOrNull { norm(it) !in otherKeys }
                         val skips = others.firstOrNull { norm(it) !in mineKeys }
-                        x.id to (only?.let { "via $it" } ?: skips?.let { "skips $it" } ?: "variant ${x.variant}")
+                        x.id to (only?.let { T.s(R.string.var_via, it) } ?: skips?.let { T.s(R.string.var_skips, it) } ?: T.s(R.string.var_variant, x.variant))
                     }
-                    for (x in same) out[x.id] = listOfNotNull(out[x.id]?.takeIf { it.isNotEmpty() && it != "usual route" }, resolved[x.id]).joinToString(", ")
+                    for (x in same) out[x.id] = listOfNotNull(out[x.id]?.takeIf { it.isNotEmpty() && it != T.s(R.string.var_usual) }, resolved[x.id]).joinToString(", ")
                 }
             }
             return out

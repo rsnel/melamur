@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">MelaMur</string>
+    <string name="app_name" translatable="false">MelaMur</string>
     <string name="consent_title">Privacy &amp; location data</string>
     <string name="consent_text">MelaMur shows a map of Malta and helps you while riding the bus.\n\nWhat we collect: only while your phone sees the on-board network \"Tallinja Wi-Fi\", MelaMur switches on GPS and sends your position, speed and heading, together with a random trip identifier, to melamur.snel.it. No name, account, phone number or advertising ID is collected. When you leave the bus, GPS is switched off and collection stops.\n\nWhy: the positions of all participating riders are combined with bus stop and timetable data to build a more accurate live bus map of Malta (legal basis: your consent, Art. 6(1)(a) GDPR).\n\nRetention: raw positions are kept at most 30 days, after which only anonymous aggregates remain.\n\nYour rights: you can withdraw consent at any time via the Privacy button; the map keeps working without it. You have the right to access, rectification, erasure and to lodge a complaint with the Information and Data Protection Commissioner (IDPC, Malta). Controller contact: privacy@snel.it.</string>
     <string name="consent_accept">I agree</string>
     <string name="consent_decline">No thanks (map only)</string>
     <string name="consent_withdraw">Withdraw consent</string>
     <string name="close">Close</string>
-    <string name="center">◎</string>
-    <string name="center_following">◉</string>
-    <string name="center_heading">▲</string>
+    <string name="center" translatable="false">◎</string>
+    <string name="center_following" translatable="false">◉</string>
+    <string name="center_heading" translatable="false">▲</string>
     <string name="cd_compass">Turn map to north up</string>
     <string name="privacy">Privacy</string>
-    <string name="menu">☰</string>
+    <string name="menu" translatable="false">☰</string>
     <string name="tab_map">Map</string>
     <string name="tab_text">Text</string>
     <string name="tab_misc">Misc</string>
@@ -20,7 +20,7 @@
     <string name="tab_navigate">Navigate</string>
     <string name="plan_journey">Plan a journey</string>
     <string name="plan">Plan</string>
-    <string name="swap_ends">⇅</string>
+    <string name="swap_ends" translatable="false">⇅</string>
     <string name="cd_map">Map view</string>
     <string name="cd_text">Text view</string>
     <string name="cd_menu">Menu</string>
@@ -57,8 +57,8 @@
     <string name="hint_swipe_to_text">Pull from the left or right edge for the text view</string>
     <string name="hint_swipe_to_map">Pull from the left or right edge for the map</string>
     <string name="cd_swap">Swap from and to</string>
-    <string name="zoom_in">+</string>
-    <string name="zoom_out">−</string>
+    <string name="zoom_in" translatable="false">+</string>
+    <string name="zoom_out" translatable="false">−</string>
     <string name="cd_zoom_in">Zoom in</string>
     <string name="cd_zoom_out">Zoom out</string>
     <string name="text_all_lines">All lines</string>
@@ -69,7 +69,7 @@
     <string name="text_select_line">Select a bus line</string>
     <string name="text_no_route">No journey planned yet.</string>
     <string name="text_route">Planned journey</string>
-    <string name="search">🔍</string>
+    <string name="search" translatable="false">🔍</string>
     <string name="search_title">Search</string>
     <string name="search_hint">Stop, address or landmark</string>
 
@@ -157,4 +157,87 @@
     <string name="off_route">The bus left its usual route</string>
     <string name="channel_status">Tracking status</string>
     <string name="channel_alerts">Bus alerts</string>
+    <!-- language -->
+    <string name="cd_language">Language: %1$s (tap to switch)</string>
+    <string name="lang_name">English</string>
+
+    <!-- explore texts -->
+    <string name="wait_location">Waiting for your location…</string>
+    <string name="no_more_today">No more departures today</string>
+    <string name="now">now</string>
+    <string name="in_min">in %1$d min</string>
+    <string name="then_at">then %1$s</string>
+    <string name="last_today">last today</string>
+    <string name="all_variants">All %1$d variants: %2$s</string>
+    <string name="all_variants_short">(all variants)</string>
+    <string name="variant_is">Variant: %1$s</string>
+    <string name="trip_departing">Trip departing %1$s</string>
+    <string name="headway_next">next bus in %1$d min</string>
+    <string name="last_trip">last trip</string>
+    <string name="this_trip">This trip: %1$s</string>
+    <string name="no_trips">No trips found for this time.</string>
+    <string name="selected_point">Selected point</string>
+    <string name="point_hint">Tap the map to pick a point, or wait for your location.</string>
+    <string name="nearby">Nearby: %1$s</string>
+    <string name="landmark">Landmark: %1$s  (%2$s)</string>
+    <string name="nearest_stops">Nearest stops</string>
+    <string name="use_my_position">Use my position</string>
+    <string name="stop_hint">Tap a stop on the map to see its departures.</string>
+    <string name="stop_number">Stop #%1$s</string>
+    <string name="no_lines_here">No lines serve this stop.</string>
+    <string name="next_tap_time">Next %1$s (%2$s)  ·  tap a time for the whole run</string>
+    <string name="no_departures_today">No departures today.</string>
+    <string name="set_from_to">Set from and to above, then tap Plan.</string>
+    <string name="show_stops">Show stops</string>
+    <string name="hide_stops">Hide stops</string>
+    <string name="walk_to_m">Walk %1$d m to %2$s</string>
+    <string name="no_deps_stop_today">No departures from this stop today.</string>
+    <string name="dropped_pin">Dropped pin</string>
+    <string name="sum_walk">walk %1$d m</string>
+    <string name="sum_bus">bus %1$s</string>
+    <string name="location_needed">Location permission needed</string>
+    <string name="saved_place">Saved place</string>
+    <string name="tag_start">%1$s  start</string>
+    <string name="tag_bus">%1$s  bus %2$s</string>
+    <string name="tag_off">%1$s  get off</string>
+    <string name="tag_arrive">%1$s  arrive</string>
+
+    <!-- variant labels -->
+    <string name="var_via">via %1$s</string>
+    <string name="var_not_via">not via %1$s</string>
+    <string name="var_from">from %1$s</string>
+    <string name="var_to">to %1$s</string>
+    <string name="var_no_further">no further than %1$s</string>
+    <string name="var_express">express</string>
+    <string name="var_usual">usual route</string>
+    <string name="var_skips">skips %1$s</string>
+    <string name="var_variant">variant %1$s</string>
+
+    <!-- planner progress -->
+    <string name="plan_loading">Loading timetable…</string>
+    <string name="plan_running">Running %1$s + walking…</string>
+    <string name="plan_running_engine">Running %1$s…</string>
+    <string name="plan_network">Building the network…</string>
+    <string name="plan_found">Options found: %1$d</string>
+    <string name="precalc_line">Line %1$d of %2$d</string>
+    <string name="precalc_groups">Grouping stops for the zoomed-out map</string>
+
+    <!-- updates -->
+    <string name="upd_checking">Checking for updates…</string>
+    <string name="upd_none">No update</string>
+    <string name="upd_installed">Installed: %1$s</string>
+    <string name="upd_check_failed">Update check failed</string>
+    <string name="upd_available">%1$s is available</string>
+    <string name="upd_install">Install</string>
+    <string name="upd_later">Later</string>
+    <string name="upd_allow_title">Allow installing updates</string>
+    <string name="upd_allow_text">Android asks once whether MelaMur may install apps. Turn it on, come back, and tap Check for updates again.</string>
+    <string name="upd_open_settings">Open settings</string>
+    <string name="upd_downloading">Downloading %1$s…</string>
+    <string name="upd_token_rejected">GitHub did not accept the token.</string>
+    <string name="upd_failed">Update failed</string>
+    <string name="upd_token_text">GitHub only lets signed-in users download debug builds. Paste a GitHub token once; a fine-grained token with read-only access to public repositories is enough. It is kept only on this phone.</string>
+    <string name="upd_token_title">GitHub token</string>
+    <string name="upd_save">Save</string>
+    <string name="upd_remove_token">Remove token</string>
 </resources>

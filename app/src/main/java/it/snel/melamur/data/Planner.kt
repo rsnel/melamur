@@ -1,5 +1,7 @@
 package it.snel.melamur.data
 
+import it.snel.melamur.R
+import it.snel.melamur.T
 import it.snel.melamur.map.Geo
 import java.time.LocalDateTime
 import kotlin.math.hypot
@@ -61,23 +63,23 @@ object Planner {
 
     fun plan(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime,
              engine: Engine = Engine.RAPTOR, onProgress: ((String) -> Unit)? = null): List<Itinerary> {
-        onProgress?.invoke("Loading timetable…")
+        onProgress?.invoke(T.s(R.string.plan_loading))
         val ctx = prepare(db, allStops, from, to, departAt, onProgress) ?: return directOnly(from, to, departAt)
-        onProgress?.invoke("Running ${engine.name} + walking…")
+        onProgress?.invoke(T.s(R.string.plan_running, engine.name))
         val res = finalize(ctx, runEngine(engine, ctx.d, ctx.access, ctx.egress, ctx.departMin), from, to)
-        onProgress?.invoke("Found ${res.size} option${if (res.size == 1) "" else "s"}")
+        onProgress?.invoke(T.s(R.string.plan_found, res.size))
         return res
     }
 
     /** Run all three engines, timing each; itineraries are converted identically. */
     fun compare(db: MptDb, allStops: List<Stop>, from: Place, to: Place, departAt: LocalDateTime,
                 onProgress: ((String) -> Unit)? = null): List<EngineResult> {
-        onProgress?.invoke("Loading timetable…")
+        onProgress?.invoke(T.s(R.string.plan_loading))
         val ctx = prepare(db, allStops, from, to, departAt, onProgress) ?: return Engine.values().map {
             EngineResult(it, 0.0, directOnly(from, to, departAt))
         }
         return Engine.values().map { e ->
-            onProgress?.invoke("Running ${e.name}…")
+            onProgress?.invoke(T.s(R.string.plan_running_engine, e.name))
             val t0 = System.nanoTime()
             val journeys = runEngine(e, ctx.d, ctx.access, ctx.egress, ctx.departMin)
             val ms = (System.nanoTime() - t0) / 1_000_000.0
@@ -96,7 +98,7 @@ object Planner {
         val date = departAt.toLocalDate()
         val v = db.versionFor(date); val bit = Malta.weekdayBit(date)
         val departMin = departAt.hour * 60 + departAt.minute
-        onProgress?.invoke("Building the network…")
+        onProgress?.invoke(T.s(R.string.plan_network))
         val d = data(db, allStops, v, bit)
         onProgress?.invoke("${d.nStops} stops in service")
         val access = near(d, from); val egress = near(d, to).associate { it[0] to it[1] }

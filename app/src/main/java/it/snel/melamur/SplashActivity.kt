@@ -19,6 +19,8 @@ import kotlin.math.min
  * Malta Public Transport.
  */
 class SplashActivity : Activity() {
+    override fun attachBaseContext(base: android.content.Context) = super.attachBaseContext(Lang.wrap(base))
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Parse the map (and warm the dataset) while the animation plays, so the
