@@ -103,6 +103,7 @@ class MainActivity : Activity(), LocationListener {
     private var stopLine: String? = null             // STOP: a line picked at the stop (first tap)
     private var stopLineDir = 0
     private var lineTrip: Long? = null               // LINE: show this run (picked from a stop's times)
+    private var shownLineStopDirs: Map<String, List<Int>> = emptyMap()  // line on the map: stop id -> its directions
 
     /** One Explore state, for the back button. */
     private data class Snap(
@@ -209,7 +210,15 @@ class MainActivity : Activity(), LocationListener {
         // Explore: a stop tap selects the stop, a chip selects its line, an empty tap selects
         // the point. Navigate keeps the stop popup (with navigate from / to).
         map.onStopTapped = { bs ->
-            stopFor(bs)?.let { if (mode == Mode.EXPLORE) selectStop(it, moveCamera = false) else showStop(it) }
+            stopFor(bs)?.let { st ->
+                if (mode != Mode.EXPLORE) { showStop(st); return@let }
+                // a stop of the line on show: straight to that stop with this line picked
+                val line = selectedLine
+                val dirs = shownLineStopDirs[bs.id]
+                if (sub == Sub.LINE && line != null && dirs != null)
+                    selectStop(st, moveCamera = false, line = line, dir = if (selectedDir in dirs) selectedDir else dirs.first())
+                else selectStop(st, moveCamera = false)
+            }
         }
         // a line picked from the stop's chips: show it but keep the view (the button offers the zoom)
         // stop on the map: the first tap on a line shows where it goes and when it leaves,
@@ -402,6 +411,7 @@ class MainActivity : Activity(), LocationListener {
     }
 
     private fun clearRoutes() {
+        shownLineStopDirs = emptyMap()
         map.routes = emptyList(); map.activeRouteId = null; map.itinPaths = emptyList(); map.invalidate()
     }
 
@@ -509,9 +519,9 @@ class MainActivity : Activity(), LocationListener {
     }
 
     /** STOP mode for [stop]; [moveCamera] centres the map on it (when chosen from text or search). */
-    private fun selectStop(stop: Stop, moveCamera: Boolean) {
+    private fun selectStop(stop: Stop, moveCamera: Boolean, line: String? = null, dir: Int = 0) {
         remember()
-        sub = Sub.STOP; selectedStop = stop; stopLine = null
+        sub = Sub.STOP; selectedStop = stop; stopLine = line; stopLineDir = dir
         if (moveCamera && !map.follow) map.centerOn(stop.asBusStop())
         exploreChanged()
     }
@@ -755,7 +765,8 @@ class MainActivity : Activity(), LocationListener {
                     val stop = s.number?.let { byNum[it] }
                     val nm = stop?.display ?: s.name
                     val row = tv("${Malta.hhmm(s.minutes)}    $nm", white, 15f)
-                    if (stop != null) row.setOnClickListener { selectStop(stop, moveCamera = true) }  // → stop mode
+                    // → that stop, with this line picked
+                    if (stop != null) row.setOnClickListener { selectStop(stop, moveCamera = true, line = code, dir = di) }
                     textContent.addView(row)
                 }
                 if (stops.isEmpty()) textContent.addView(tv("No trips found for this time.", grey))
@@ -1212,6 +1223,8 @@ class MainActivity : Activity(), LocationListener {
                 RouteDirection(it.directionIndex.toString(), it.name, it.shape, it.stopNumbers, it.color)
             } + branches)
             val gfx = RouteRenderer.build(route, busStopsById)
+            val stopDirs = HashMap<String, MutableList<Int>>()
+            for (d in dirs) for (id in d.stopNumbers) stopDirs.getOrPut(id) { ArrayList() }.let { if (d.directionIndex !in it) it.add(d.directionIndex) }
             // extent of all directions' shapes
             var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
             for (d in dirs) {
@@ -1220,6 +1233,7 @@ class MainActivity : Activity(), LocationListener {
             }
             runOnUiThread {
                 map.itinPaths = emptyList(); map.routes = listOf(gfx); map.activeRouteId = code; map.invalidate()
+                shownLineStopDirs = stopDirs
                 if (x0 <= x1) lineBounds = floatArrayOf(x0, y0, x1, y1)
                 if (fit) fitLine() else refreshLineFit()
             }
