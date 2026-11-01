@@ -652,7 +652,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             }
         }
         for (r in routes) {
-            val active = activeRouteId == null || r.route.id == activeRouteId
+            val active = activeRouteId == null || r.id == activeRouteId
             for (dl in r.lines) {
                 if (highContrast) {
                     // a fat white line broken by short black parts ("XXXX XXXX XXXX") on a thin
@@ -948,12 +948,13 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         lineMarks.clear(); lineStopIds.clear()
         val pad = 60 * dp / scale
         for (r in routes) {
-            if (activeRouteId != null && r.route.id != activeRouteId) continue
+            if (activeRouteId != null && r.id != activeRouteId) continue
             val ss = r.stops
             val done = BooleanArray(ss.size)
             for (i in ss.indices) {
                 if (done[i]) continue
                 val a = ss[i]
+                if (a.x.isNaN()) { done[i] = true; continue }
                 lineStopIds.add(a.id)
                 if (a.x < vx0 - pad || a.x > vx1 + pad || a.y < vy0 - pad || a.y > vy1 + pad) continue
                 pt[0] = a.x; pt[1] = a.y; matrix.mapPoints(pt)

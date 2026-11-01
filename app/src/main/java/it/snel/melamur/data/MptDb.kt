@@ -206,6 +206,25 @@ class MptDb private constructor(private val db: SQLiteDatabase) {
         return out
     }
 
+    /**
+     * Stops of each variant in driving order (route_variant_stop): stop number as a
+     * string and the departure bearing along the variant's polyline (NaN if unknown).
+     */
+    fun variantStops(ids: List<Long>): Map<Long, List<Pair<String, Float>>> {
+        if (ids.isEmpty()) return emptyMap()
+        val cols = query("PRAGMA table_info(route_variant_stop)", emptyArray()) { it.getString(1) }
+        if (cols.isEmpty()) return emptyMap()
+        val bearing = if ("departure_bearing" in cols) "departure_bearing" else "NULL"
+        val out = HashMap<Long, ArrayList<Pair<String, Float>>>()
+        for (chunk in ids.chunked(500)) {
+            query("SELECT variant_id, stop_number, $bearing FROM route_variant_stop WHERE variant_id IN (${chunk.joinToString(",") { "?" }}) " +
+                "AND stop_number IS NOT NULL ORDER BY variant_id, seq", chunk.map { it.toString() }.toTypedArray()) {
+                Triple(it.getLong(0), it.getInt(1).toString(), if (it.isNull(2)) Float.NaN else it.getFloat(2))
+            }.forEach { (id, n, b) -> out.getOrPut(id) { ArrayList() }.add(n to b) }
+        }
+        return out
+    }
+
     /** A variant's own geometry, or null if it has none. */
     fun variantShape(x: Variant): Polyline? = x.polyline?.takeIf { it.isNotEmpty() }?.let { poly ->
         val pts = TallinjaApi.decodePolyline(poly)

@@ -103,7 +103,8 @@ class MainActivity : Activity(), LocationListener {
     private var stopLine: String? = null             // STOP: a line picked at the stop (first tap)
     private var stopLineDir = 0
     private var lineTrip: Long? = null               // LINE: show this run (picked from a stop's times)
-    private var shownLineStopDirs: Map<String, List<Int>> = emptyMap()  // line on the map: stop id -> its directions
+    private var shownLineStopDirs: Map<String, List<Int>> = emptyMap()
+    @Volatile private var precalc: Precalc? = null   // per-database results (stop directions, groups, line drawings)  // line on the map: stop id -> its directions
 
     /** One Explore state, for the back button. */
     private data class Snap(
@@ -1133,7 +1134,7 @@ class MainActivity : Activity(), LocationListener {
         runOnUiThread {
             busStopsById = byId
             map.stops = bs
-            cached?.let { map.setPrecalc(it) }
+            cached?.let { precalc = it; map.setPrecalc(it) }
             rebuildIndex()
             if (first != null && today < first) toast(getString(R.string.db_future, first))
             render()
@@ -1146,7 +1147,7 @@ class MainActivity : Activity(), LocationListener {
             }
             try { Precalc.save(this, key, p) } catch (e: Exception) { /* used this session anyway */ }
             runOnUiThread {
-                if (map.stops === bs) map.setPrecalc(p)
+                if (map.stops === bs) { precalc = p; map.setPrecalc(p) }
                 note.visibility = View.GONE
                 toast(getString(R.string.precalc_done))
             }
@@ -1211,31 +1212,17 @@ class MainActivity : Activity(), LocationListener {
     private fun showRouteOnMap(code: String, fit: Boolean = false) {
         val db = DbManager.db ?: return
         Thread {
-            val v = db.versionFor(LocalDate.now(Malta.ZONE))
-            val dirs = db.directionsForRoute(code, v)
-            if (dirs.isEmpty()) return@Thread
-            // the main route of each direction, plus the other variants' own geometry (branches)
-            val branches = db.variants(code, v).filter { !it.main }.mapNotNull { x ->
-                val shape = db.variantShape(x) ?: return@mapNotNull null
-                val color = dirs.firstOrNull { it.directionIndex == x.directionIndex }?.color ?: dirs.first().color
-                RouteDirection("v${x.id}", x.description ?: x.name ?: "", shape, emptyList(), color)
-            }
-            val route = BusRoute(code, code, dirs.first().color, dirs.map {
-                RouteDirection(it.directionIndex.toString(), it.name, it.shape, it.stopNumbers, it.color)
-            } + branches)
-            val gfx = RouteRenderer.build(route, busStopsById)
+            // the line's merged drawing from all its variant polylines: precalculated,
+            // or worked out now if the precalculation is not there yet
+            val gfx = precalc?.lines?.get(code)
+                ?: RouteRenderer.fromDb(db, code, db.versionFor(LocalDate.now(Malta.ZONE)), busStopsById)
             val stopDirs = HashMap<String, MutableList<Int>>()
-            for (d in dirs) for (id in d.stopNumbers) stopDirs.getOrPut(id) { ArrayList() }.let { if (d.directionIndex !in it) it.add(d.directionIndex) }
-            // extent of all directions' shapes
-            var x0 = Float.MAX_VALUE; var y0 = Float.MAX_VALUE; var x1 = -Float.MAX_VALUE; var y1 = -Float.MAX_VALUE
-            for (d in dirs) {
-                for (x in d.shape.xs) { if (x < x0) x0 = x; if (x > x1) x1 = x }
-                for (y in d.shape.ys) { if (y < y0) y0 = y; if (y > y1) y1 = y }
-            }
+            for (st in gfx.stops) stopDirs.getOrPut(st.id) { ArrayList() }.let { if (st.dir !in it) it.add(st.dir) }
+            val bounds = gfx.bounds
             runOnUiThread {
                 map.itinPaths = emptyList(); map.routes = listOf(gfx); map.activeRouteId = code; map.invalidate()
                 shownLineStopDirs = stopDirs
-                if (x0 <= x1) lineBounds = floatArrayOf(x0, y0, x1, y1)
+                if (bounds != null) lineBounds = bounds
                 if (fit) fitLine() else refreshLineFit()
             }
         }.start()

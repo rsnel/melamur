@@ -21,16 +21,21 @@ import kotlin.math.sin
  *  - per stop, the directions buses leave it in (from every route direction that
  *    calls there, projected on its shape; nearly equal directions merged);
  *  - the stop groups ("circles with numbers") for every zoom level where stops
- *    are grouped.
+ *    are grouped;
+ *  - every line's drawing: all its variant polylines merged ([RouteRenderer]).
+ * Stop directions come from the lines' variants (route_variant_stop), so only
+ * the Tallinja geometry is used.
  * Recomputed when the database, the dataset version in use, the screen density
  * or [FORMAT] changes.
  */
 class Precalc(
     val bearings: Map<String, FloatArray>,
     val clusters: Map<Int, List<StopCluster>>,
+    /** Each line's merged drawing (all its variant polylines), by line code. */
+    val lines: Map<String, RouteGfx> = emptyMap(),
 ) {
     companion object {
-        private const val FORMAT = 2
+        private const val FORMAT = 3
         private const val FILE = "precalc.bin"
 
         /** Identity of what the results depend on. */
@@ -60,7 +65,9 @@ class Precalc(
                         StopCluster(x, y, members, x0, y0, x1, y1)
                     }
                 }
-                Precalc(bearings, clusters)
+                val lines = HashMap<String, RouteGfx>()
+                repeat(inp.readInt()) { val g = RouteRenderer.read(inp, stops); lines[g.id] = g }
+                Precalc(bearings, clusters, lines)
             }
         } catch (e: Exception) { null }
 
@@ -79,6 +86,8 @@ class Precalc(
                         out.writeInt(c.stops.size); c.stops.forEach { out.writeUTF(it.id) }
                     }
                 }
+                out.writeInt(p.lines.size)
+                for (g in p.lines.values) RouteRenderer.write(out, g)
             }
             tmp.renameTo(File(ctx.filesDir, FILE))
         }
@@ -86,28 +95,23 @@ class Precalc(
         /** Work it all out; [progress] gets a short status line now and then. */
         fun compute(db: MptDb, v: Int, stops: List<BusStop>, density: Float, progress: (String) -> Unit): Precalc {
             val byId = stops.associateBy { it.id }
-            // 1) departure directions per stop
+            // 1) every line's drawing from all its variants, and from those the
+            //    departure directions per stop
             val raw = HashMap<String, MutableList<Float>>()
-            val lines = db.allLines(v)
-            for ((i, l) in lines.withIndex()) {
-                if (i % 10 == 0) progress("Stop directions: line ${i + 1} of ${lines.size}")
-                for (d in db.directionsForRoute(l.code, v)) {
-                    var along = -1f
-                    for (id in d.stopNumbers) {
-                        val s = byId[id] ?: continue
-                        val p = d.shape.project(s.x, s.y, maxOf(-1f, along - 30f))?.takeIf { it.dist < 80f }
-                            ?: d.shape.project(s.x, s.y)?.takeIf { it.dist < 80f } ?: continue
-                        along = p.along
-                        raw.getOrPut(id) { ArrayList() }.add(p.bearing)
-                    }
-                }
+            val codes = db.allLines(v).map { it.code }
+            val lines = HashMap<String, RouteGfx>()
+            for ((i, code) in codes.withIndex()) {
+                if (i % 5 == 0) progress("Line ${i + 1} of ${codes.size}")
+                val g = RouteRenderer.fromDb(db, code, v, byId)
+                lines[code] = g
+                for (s in g.stops) if (!s.bearing.isNaN()) raw.getOrPut(s.id) { ArrayList() }.add(s.bearing)
             }
             val bearings = raw.mapValues { (_, bs) -> mergeBearings(bs) }
             // 2) stop groups for every zoom level that shows them
             progress("Grouping stops for the zoomed-out map")
             val clusters = HashMap<Int, List<StopCluster>>()
             for (level in StopCluster.levels(density)) clusters[level] = StopCluster.compute(stops, level)
-            return Precalc(bearings, clusters)
+            return Precalc(bearings, clusters, lines)
         }
 
         /** Directions within [TOL] degrees of each other become one (their circular mean). */
