@@ -330,6 +330,8 @@ class MainActivity : Activity(), LocationListener {
         val hc = highContrast
         map.highContrast = hc
         HighContrast.apply(this, window)
+        // red text would turn almost black under the filter
+        destination.setTextColor(if (hc) Color.WHITE else Color.rgb(238, 0, 0))
         refreshTabs()
     }
 
@@ -1498,8 +1500,9 @@ class MainActivity : Activity(), LocationListener {
 
     private fun pickDateTime(onPicked: (LocalDateTime) -> Unit) {
         val now = LocalDateTime.now(Malta.ZONE)
-        DatePickerDialog(this, { _, y, mo, d ->
-            TimePickerDialog(this, { _, h, mi ->
+        val th = HighContrast.dialogTheme(this)
+        DatePickerDialog(this, th, { _, y, mo, d ->
+            TimePickerDialog(this, th, { _, h, mi ->
                 onPicked(LocalDateTime.of(y, mo + 1, d, h, mi))
             }, now.hour, now.minute, true).let { HighContrast.dialog(it) }.show()
         }, now.year, now.monthValue - 1, now.dayOfMonth).let { HighContrast.dialog(it) }.show()

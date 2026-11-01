@@ -34,7 +34,7 @@ class SettingsActivity : Activity() {
             orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.rgb(11, 11, 11))
             setPadding(px(20f), px(20f), px(20f), px(20f))
         }
-        root.addView(title(getString(R.string.settings_title), 22f, Color.rgb(238, 0, 0)))
+        root.addView(title(getString(R.string.settings_title), 22f, if (HighContrast.on(this)) Color.WHITE else Color.rgb(238, 0, 0)))
 
         // --- debug switch
         val debug = Switch(this).apply {

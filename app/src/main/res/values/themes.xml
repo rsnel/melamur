@@ -14,6 +14,14 @@
         <item name="android:colorAccent">@color/mm_red</item>
         <item name="android:background">@color/mm_black</item>
     </style>
+    <!-- high contrast: dialog buttons, list highlights and picker headers in white
+         (red would turn almost black under the black-and-white filter) -->
+    <style name="Theme.MelaMur.Dialog.HC" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">@color/mm_white</item>
+        <item name="android:colorPrimary">@color/mm_white</item>
+        <item name="android:background">@color/mm_black</item>
+        <item name="android:textColorPrimary">@color/mm_white</item>
+    </style>
     <style name="MmButton" parent="android:Widget.Material.Button">
         <item name="android:backgroundTint">@color/mm_red</item>
         <item name="android:textColor">@color/mm_white</item>

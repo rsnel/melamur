@@ -36,9 +36,12 @@ object HighContrast {
     }
 
     fun <D : Dialog> dialog(d: D): D { apply(d.context, d.window); return d }
+
+    /** Theme for dialogs: white accents in high contrast, else the app's (0 = default). */
+    fun dialogTheme(ctx: Context): Int = if (on(ctx)) R.style.Theme_MelaMur_Dialog_HC else 0
 }
 
 /** AlertDialog.Builder whose dialogs follow high contrast. */
-class HcDialog(ctx: Context) : AlertDialog.Builder(ctx) {
+class HcDialog(ctx: Context) : AlertDialog.Builder(ctx, HighContrast.dialogTheme(ctx)) {
     override fun create(): AlertDialog = HighContrast.dialog(super.create())
 }
