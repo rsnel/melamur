@@ -567,8 +567,7 @@ class MainActivity : Activity(), LocationListener {
                 val a = deps.getOrNull(0); val b = deps.getOrNull(1)
                 listOf("$pick  →  $towards",
                     if (a == null) "No more departures today"
-                    else "${Malta.hhmm(a.minutes)} (${minsFrom(now, a)})" + (b?.let { "  ·  then ${Malta.hhmm(it.minutes)}" } ?: "  ·  last today"),
-                    getString(R.string.callout_tap_again))
+                    else "${Malta.hhmm(a.minutes)} (${minsFrom(now, a)})" + (b?.let { "  ·  then ${Malta.hhmm(it.minutes)}" } ?: "  ·  last today"))
             }
             runOnUiThread {
                 // still the same selection?
