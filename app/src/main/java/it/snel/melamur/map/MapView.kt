@@ -46,6 +46,10 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
     class ItinPath(val path: Path, val color: Int, val walk: Boolean)
     var itinPaths: List<ItinPath> = emptyList()
         set(v) { field = v; invalidate() }
+    /** Time labels along a planned journey (board / alight / arrive), in world coords. */
+    class ItinLabel(val x: Float, val y: Float, val text: String)
+    var itinLabels: List<ItinLabel> = emptyList()
+        set(v) { field = v; invalidate() }
     class PlaceLabel(val x: Float, val y: Float, val name: String, val rank: Int)
     class StreetLabel(val x: Float, val y: Float, val x2: Float, val y2: Float, val name: String)
     var places: List<PlaceLabel> = emptyList()
@@ -810,6 +814,7 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
             meFill.color = if (highContrast) Color.BLACK else Color.WHITE
             c.drawCircle(pt[0], pt[1], 8 * dp, meFill); c.drawCircle(pt[0], pt[1], 8 * dp, meRing)
         }
+        drawItinLabels(c)
         drawCallout(c)
         drawScaleBar(c)
         debugText?.let { c.drawText(it, width / 2f, 22 * dp, debugPaint) }
@@ -871,6 +876,36 @@ class MapView(ctx: Context, attrs: AttributeSet?) : View(ctx, attrs) {
         for ((i, t) in calloutLines.withIndex()) {
             calloutTextPaint.isFakeBoldText = i == 0
             c.drawText(t, left + blockW / 2, ty, calloutTextPaint); ty += lineH
+        }
+    }
+
+    private val tagBg = fill(Color.argb(235, 255, 255, 255))
+    private val tagEdge = stroke(Color.rgb(20, 20, 20)).apply { strokeWidth = 1.5f * dp }
+    private val tagText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(20, 20, 20); textSize = 13 * dp; isFakeBoldText = true }
+    private val tagRect = android.graphics.RectF()
+
+    /** The journey's times as small tags beside their points, nudged apart where they would overlap. */
+    private fun drawItinLabels(c: Canvas) {
+        if (itinLabels.isEmpty()) return
+        tagBg.color = if (highContrast) Color.BLACK else Color.argb(235, 255, 255, 255)
+        tagEdge.color = if (highContrast) Color.WHITE else Color.rgb(20, 20, 20)
+        tagText.color = if (highContrast) Color.WHITE else Color.rgb(20, 20, 20)
+        val placed = ArrayList<android.graphics.RectF>()
+        val h = 22 * dp; val padX = 6 * dp
+        for (l in itinLabels) {
+            pt[0] = l.x; pt[1] = l.y; matrix.mapPoints(pt)
+            val w = tagText.measureText(l.text) + 2 * padX
+            var left = pt[0] + 10 * dp; var top = pt[1] - h - 4 * dp
+            tagRect.set(left, top, left + w, top + h)
+            var tries = 0
+            while (placed.any { android.graphics.RectF.intersects(it, tagRect) } && tries < 6) {
+                top += h + 3 * dp; tagRect.set(left, top, left + w, top + h); tries++
+            }
+            if (tagRect.right < 0 || tagRect.left > width || tagRect.bottom < 0 || tagRect.top > height) continue
+            placed += android.graphics.RectF(tagRect)
+            c.drawLine(pt[0], pt[1], left, top + h / 2, tagEdge)
+            c.drawRoundRect(tagRect, 6 * dp, 6 * dp, tagBg); c.drawRoundRect(tagRect, 6 * dp, 6 * dp, tagEdge)
+            c.drawText(l.text, left + padX, top + h / 2 + tagText.textSize * 0.36f, tagText)
         }
     }
 

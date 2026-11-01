@@ -70,24 +70,64 @@
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Navigate while planning: linear throbber + what the algorithm is doing -->
-        <LinearLayout android:id="@+id/navBusy"
+        <!-- Navigate, options: browse the planned options, pick one -->
+        <LinearLayout android:id="@+id/navOptions"
             android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:layout_marginTop="6dp" android:orientation="vertical"
-            android:background="@drawable/panel_bg" android:padding="12dp" android:visibility="gone">
-            <TextView android:id="@+id/navStatus"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:textColor="@color/mm_white" android:textSize="14sp" />
-            <ProgressBar android:id="@+id/navProgress"
-                style="?android:attr/progressBarStyleHorizontal"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
-                android:layout_marginTop="8dp" android:indeterminate="true" />
+            android:layout_marginTop="6dp" android:orientation="vertical" android:visibility="gone">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical">
+                <Button android:id="@+id/optPrev" style="@style/MmButton"
+                    android:layout_width="48dp" android:layout_height="46dp" android:minWidth="0dp"
+                    android:text="◀" android:contentDescription="@string/cd_prev_option" />
+                <TextView android:id="@+id/optInfo"
+                    android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:gravity="center" android:paddingHorizontal="6dp"
+                    android:textColor="@color/mm_white" android:textSize="15sp" />
+                <Button android:id="@+id/optNext" style="@style/MmButton"
+                    android:layout_width="48dp" android:layout_height="46dp" android:minWidth="0dp"
+                    android:text="▶" android:contentDescription="@string/cd_next_option" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="6dp" android:orientation="horizontal">
+                <Button android:id="@+id/optEdit" style="@style/MmButton"
+                    android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1"
+                    android:layout_marginEnd="6dp" android:text="@string/nav_change" />
+                <Button android:id="@+id/optSelect" style="@style/MmButton"
+                    android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1"
+                    android:text="@string/nav_select" />
+            </LinearLayout>
         </LinearLayout>
 
-        <!-- Navigate while a route is active: a single cancel button -->
-        <Button android:id="@+id/navCancel" style="@style/MmButton"
-            android:layout_width="match_parent" android:layout_height="46dp"
-            android:layout_marginTop="6dp" android:text="@string/nav_cancel" android:visibility="gone" />
+        <!-- Navigate, an option selected: start interactive mode -->
+        <LinearLayout android:id="@+id/navSelected"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" android:orientation="vertical" android:visibility="gone">
+            <TextView android:id="@+id/selInfo"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:gravity="center" android:padding="4dp"
+                android:textColor="@color/mm_white" android:textSize="15sp" />
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_marginTop="6dp" android:orientation="horizontal">
+                <Button android:id="@+id/selOther" style="@style/MmButton"
+                    android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1"
+                    android:layout_marginEnd="6dp" android:text="@string/nav_other_options" />
+                <Button android:id="@+id/selStart" style="@style/MmButton"
+                    android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1"
+                    android:text="@string/nav_interactive" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Navigate, interactive: missed the bus / stop -->
+        <LinearLayout android:id="@+id/navActive"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="6dp" android:orientation="horizontal" android:visibility="gone">
+            <Button android:id="@+id/busLeft" style="@style/MmButton"
+                android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="2"
+                android:layout_marginEnd="6dp" android:text="@string/nav_bus_left" android:textStyle="bold" />
+            <Button android:id="@+id/navCancel" style="@style/MmButton"
+                android:layout_width="0dp" android:layout_height="52dp" android:layout_weight="1"
+                android:text="@string/nav_stop" />
+        </LinearLayout>
 
         <ListView android:id="@+id/searchResults"
             android:layout_width="match_parent" android:layout_height="300dp"

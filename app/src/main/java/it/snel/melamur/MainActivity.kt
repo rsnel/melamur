@@ -141,10 +141,20 @@ class MainActivity : Activity(), LocationListener {
     private lateinit var tabMisc: ImageButton
     private lateinit var timeBtn: Button
     private lateinit var planBtn: Button
-    private lateinit var navBusy: View
-    private lateinit var navStatus: TextView
+    private lateinit var navOptions: View
+    private lateinit var navSelected: View
+    private lateinit var navActive: View
+    private lateinit var optInfo: TextView
+    private lateinit var selInfo: TextView
+    /** Navigate: entering from/to/time, browsing planned options, or one option selected. */
+    private enum class NavState { INPUT, OPTIONS, SELECTED }
+    private var navState = NavState.INPUT
+    private val planOptions = ArrayList<Itinerary>()
+    private var optIdx = 0
+    private var planGen = 0              // bumped to drop the result of a cancelled planning
+    private var shownMsgId = 0           // last navigation message shown
+    private var pendingItinFit = false   // zoom to the option when it is drawn
     private lateinit var navCancel: Button
-    private var searching = false
     private var showLegStops = false
     @Volatile private var lineColorCache: Map<String, List<Int>> = emptyMap()
     // last known position (real GPS, or the simulated one in debug), for distances
@@ -198,7 +208,20 @@ class MainActivity : Activity(), LocationListener {
         setupEdgeSwipe()
         textPanel = findViewById(R.id.textPanel); textContent = findViewById(R.id.textContent)
         timeBtn = findViewById(R.id.timeBtn); planBtn = findViewById(R.id.planBtn)
-        navBusy = findViewById(R.id.navBusy); navStatus = findViewById(R.id.navStatus)
+        navOptions = findViewById(R.id.navOptions); navSelected = findViewById(R.id.navSelected)
+        navActive = findViewById(R.id.navActive)
+        optInfo = findViewById(R.id.optInfo); selInfo = findViewById(R.id.selInfo)
+        findViewById<Button>(R.id.optPrev).setOnClickListener { stepOption(-1) }
+        findViewById<Button>(R.id.optNext).setOnClickListener { stepOption(1) }
+        findViewById<Button>(R.id.optEdit).setOnClickListener { setNavState(NavState.INPUT) }
+        findViewById<Button>(R.id.optSelect).setOnClickListener { setNavState(NavState.SELECTED) }
+        findViewById<Button>(R.id.selOther).setOnClickListener { setNavState(NavState.OPTIONS) }
+        findViewById<Button>(R.id.selStart).apply {
+            setOnClickListener { currentItinerary?.let { startNavigation(it, simulate = false) } }
+            // debug: long-press replays the journey with simulated GPS
+            setOnLongClickListener { if (Settings.debug(this@MainActivity)) currentItinerary?.let { startNavigation(it, simulate = true) }; true }
+        }
+        findViewById<Button>(R.id.busLeft).setOnClickListener { NavHub.busLeft(this) }
         navCancel = findViewById(R.id.navCancel)
         navCancel.setOnClickListener { cancelNav() }
         tabExplore.setOnClickListener { setMode(Mode.EXPLORE) }
@@ -363,12 +386,18 @@ class MainActivity : Activity(), LocationListener {
     private fun refreshNavBar() {
         if (!::navInputs.isInitialized) return
         val nav = mode == Mode.NAVIGATE
-        val active = NavHub.snapshot.active || NavHub.snapshot.arrived
-        searchBar.visibility = if (nav) View.GONE else View.VISIBLE
-        navCancel.visibility = if (nav && active) View.VISIBLE else View.GONE
-        navBusy.visibility = if (nav && !active && searching) View.VISIBLE else View.GONE
-        navInputs.visibility = if (nav && !active && !searching) View.VISIBLE else View.GONE
+        val active = NavHub.snapshot.active
+        fun show(v: View, on: Boolean) { v.visibility = if (on) View.VISIBLE else View.GONE }
+        show(searchBar, !nav)
+        show(navActive, nav && active)
+        show(navOptions, nav && !active && navState == NavState.OPTIONS)
+        show(navSelected, nav && !active && navState == NavState.SELECTED)
+        show(navInputs, nav && !active && navState == NavState.INPUT)
         if (navInputs.visibility == View.VISIBLE) syncNavInputs()
+        if (navOptions.visibility == View.VISIBLE) currentItinerary?.let {
+            optInfo.text = getString(R.string.nav_option, optIdx + 1, planOptions.size) + "\n" + itinLine(it)
+        }
+        if (navSelected.visibility == View.VISIBLE) currentItinerary?.let { selInfo.text = itinLine(it) + "\n" + summary(it) }
     }
 
     private fun refreshTimeLabel() {
@@ -415,6 +444,7 @@ class MainActivity : Activity(), LocationListener {
     }
 
     private fun clearRoutes() {
+        map.itinLabels = emptyList()
         shownLineStopDirs = emptyMap()
         map.routes = emptyList(); map.activeRouteId = null; map.itinPaths = emptyList(); map.invalidate()
     }
@@ -503,6 +533,14 @@ class MainActivity : Activity(), LocationListener {
     @Suppress("DEPRECATION")
     override fun onBackPressed() {
         if (searchResults.visibility == View.VISIBLE) { hideSearch(); return }
+        // Navigate: selected -> options -> from/to (not while navigating)
+        if (mode == Mode.NAVIGATE && !NavHub.snapshot.active) {
+            when (navState) {
+                NavState.SELECTED -> { setNavState(if (planOptions.isEmpty()) NavState.INPUT else NavState.OPTIONS); return }
+                NavState.OPTIONS -> { setNavState(NavState.INPUT); return }
+                NavState.INPUT -> {}
+            }
+        }
         if (mode == Mode.EXPLORE && history.isNotEmpty()) {
             val cur = snap()
             var s = history.removeAt(history.size - 1)
@@ -658,7 +696,32 @@ class MainActivity : Activity(), LocationListener {
                 }
                 else -> {}
             }
-            runOnUiThread { map.routes = emptyList(); map.activeRouteId = null; map.itinPaths = paths; map.invalidate() }
+            // time labels: departure, each boarding (time + line), each alighting, arrival
+            val labels = ArrayList<MapView.ItinLabel>()
+            itin.legs.firstOrNull()?.let { l ->
+                val (x, y) = when (l) {
+                    is WalkLeg -> Geo.x(l.fromLon) to Geo.y(l.fromLat)
+                    is BusLeg -> byNum[l.boardNumber]?.let { it.x to it.y } ?: (Float.NaN to Float.NaN)
+                    else -> Float.NaN to Float.NaN
+                }
+                if (!x.isNaN() && l is WalkLeg) labels += MapView.ItinLabel(x, y, "${hm(itin.departMinutes)} start")
+            }
+            for (l in itin.busLegs) {
+                byNum[l.boardNumber]?.let { labels += MapView.ItinLabel(it.x, it.y, "${hm(l.boardMinutes)}  bus ${l.routeCode}") }
+                byNum[l.alightNumber]?.let { labels += MapView.ItinLabel(it.x, it.y, "${hm(l.alightMinutes)}  off") }
+            }
+            (itin.legs.lastOrNull() as? WalkLeg)?.let { labels += MapView.ItinLabel(Geo.x(it.toLon), Geo.y(it.toLat), "${hm(itin.arriveMinutes)}  arrive") }
+            // extent, to zoom to a newly shown option
+            val rb = android.graphics.RectF(); val tmp = android.graphics.RectF(); var any = false
+            for (p in paths) { p.path.computeBounds(tmp, true); if (!any) { rb.set(tmp); any = true } else rb.union(tmp) }
+            runOnUiThread {
+                map.routes = emptyList(); map.activeRouteId = null; map.itinPaths = paths; map.itinLabels = labels; map.invalidate()
+                if (pendingItinFit && any && !map.follow) {
+                    pendingItinFit = false
+                    val d = resources.displayMetrics.density
+                    map.fitBounds(rb.left, rb.top, rb.right, rb.bottom, 60 * d, 40 * d, 76 * d, 60 * d)
+                }
+            }
         }.start()
     }
 
@@ -966,7 +1029,8 @@ class MainActivity : Activity(), LocationListener {
             textContent.addView(tv("Set from and to above, then tap Plan.", grey, 13f))
             return
         }
-        textContent.addView(tv(getString(R.string.text_route), white, 17f, true))
+        textContent.addView(tv(if (navState == NavState.OPTIONS) getString(R.string.nav_option, optIdx + 1, planOptions.size)
+            else getString(R.string.text_route), white, 17f, true))
         textContent.addView(tv("${Malta.hhmm(itin.departMinutes)} → ${Malta.hhmm(itin.arriveMinutes)}  (${itin.arriveMinutes - itin.departMinutes} min)", grey, 14f))
         textContent.addView(smallBtn(if (showLegStops) "Hide stops" else "Show stops") {
             showLegStops = !showLegStops; buildTextPanel()
@@ -974,7 +1038,7 @@ class MainActivity : Activity(), LocationListener {
         val db = DbManager.db
         if (!showLegStops || db == null) {
             addLegRows(itin, emptyMap())
-            textContent.addView(smallBtn(getString(R.string.navigate)) { confirmNavigate(itin) })
+            addNavTextButtons()
         } else {
             // load the intermediate stops of each bus leg off the UI thread, then render in order
             Thread {
@@ -982,10 +1046,28 @@ class MainActivity : Activity(), LocationListener {
                 for (bl in itin.busLegs) mids[bl.tripId] = intermediateStops(db, bl)
                 runOnUiThread {
                     addLegRows(itin, mids)
-                    textContent.addView(smallBtn(getString(R.string.navigate)) { confirmNavigate(itin) })
+                    addNavTextButtons()
                 }
             }.start()
         }
+    }
+
+    /** Under the journey in text: the same choices as the bar above (browse, select, go). */
+    private fun addNavTextButtons() {
+        val row = LinearLayout(this)
+        when (navState) {
+            NavState.OPTIONS -> {
+                row.addView(smallBtn("◀") { stepOption(-1) })
+                row.addView(smallBtn("▶") { stepOption(1) })
+                row.addView(smallBtn(getString(R.string.nav_select)) { setNavState(NavState.SELECTED) })
+            }
+            NavState.SELECTED -> if (!NavHub.snapshot.active) {
+                row.addView(smallBtn(getString(R.string.nav_other_options)) { setNavState(NavState.OPTIONS) })
+                row.addView(smallBtn(getString(R.string.nav_interactive)) { currentItinerary?.let { startNavigation(it, simulate = false) } })
+            }
+            NavState.INPUT -> {}
+        }
+        if (row.childCount > 0) textContent.addView(row)
     }
 
     private fun addLegRows(itin: Itinerary, mids: Map<Long, List<TripStop>>) {
@@ -1431,62 +1513,93 @@ class MainActivity : Activity(), LocationListener {
     }
 
     // ---------------- planner (inline: start / destination / time / plan live in the top bar)
+    /** "09:12 → 09:58 (46 min)". */
+    private fun itinLine(it: Itinerary) =
+        "${hm(it.departMinutes)} → ${hm(it.arriveMinutes)}  (${it.arriveMinutes - it.departMinutes} min)"
+
+    private fun setNavState(st: NavState) {
+        navState = st
+        when (st) {
+            NavState.INPUT -> { planOptions.clear(); currentItinerary = null }
+            NavState.OPTIONS -> currentItinerary = planOptions.getOrNull(optIdx)
+            NavState.SELECTED -> currentItinerary?.let { lastItinerary = it }
+        }
+        updateMapForMode(); refreshView()
+    }
+
+    /**
+     * A modal "planning" dialog showing what the planner is doing; [work] runs in
+     * the background and its result is handed to [done] unless cancelled.
+     */
+    private fun <T> withPlanning(title: String, work: ((String) -> Unit) -> T, done: (T) -> Unit) {
+        val gen = ++planGen
+        val d = resources.displayMetrics.density
+        val status = TextView(this).apply { setTextColor(white); textSize = 14f; text = getString(R.string.nav_planning) + "…" }
+        val bar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { isIndeterminate = true }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; val p = (20 * d).toInt(); setPadding(p, p, p, p / 2)
+            addView(status); addView(bar)
+        }
+        val dlg = HcDialog(this).setTitle(title).setView(box).setCancelable(false)
+            .setNegativeButton(android.R.string.cancel) { _, _ -> planGen++ }.create()
+        dlg.show()
+        Thread {
+            val res = work { msg -> runOnUiThread { status.text = msg } }
+            runOnUiThread {
+                if (gen != planGen) return@runOnUiThread
+                runCatching { dlg.dismiss() }
+                done(res)
+            }
+        }.start()
+    }
+
     private fun runPlan() {
         if (DbManager.db == null) { toast(getString(R.string.db_none)); return }
         val f = from; val t = to
         if (f == null || t == null) { toast(getString(R.string.planner_need)); return }
         val db = DbManager.db ?: return
         val depart = departWhen ?: LocalDateTime.now(Malta.ZONE)
-        searching = true; navStatus.text = "Planning…"; refreshNavBar()
-        val onProg: (String) -> Unit = { msg -> runOnUiThread { if (searching) navStatus.text = msg } }
-        Thread {
-            val res: List<Itinerary>; val stats: String
-            if (Settings.debug(this)) {
-                val cmp = runCatching { Planner.compare(db, allStops, f, t, depart, onProg) }.getOrDefault(emptyList())
-                res = cmp.firstOrNull { it.engine == Engine.RAPTOR }?.itineraries ?: emptyList()
-                stats = statsText(cmp)
-            } else {
-                val eng = Settings.engine(this)
-                val t0 = System.nanoTime()
-                res = runCatching { Planner.plan(db, allStops, f, t, depart, eng, onProg) }.getOrDefault(emptyList())
-                stats = "%s   %.1f ms · %d options".format(eng.name, (System.nanoTime() - t0) / 1_000_000.0, res.size)
-            }
-            runOnUiThread { searching = false; refreshNavBar(); showItineraries(res, stats) }
-        }.start()
-    }
-
-    private fun showItineraries(res: List<Itinerary>, stats: String) {
-        if (res.isEmpty()) { toast(getString(R.string.planner_none)); return }
-        val pad = (12 * resources.displayMetrics.density).toInt()
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(pad, pad, pad, 0) }
-        if (stats.isNotBlank()) box.addView(TextView(this).apply {
-            text = stats; setTextColor(grey); textSize = 11f
-            typeface = android.graphics.Typeface.MONOSPACE; setPadding(0, 0, 0, pad)
-        })
-        var dlg: AlertDialog? = null
-        for (itin in res) {
-            val cols = itin.busLegs.map { bl -> lineColors(bl.routeCode, bl.color) }.ifEmpty { listOf(listOf(grey)) }
-            box.addView(clickRow(cols,
-                "${hm(itin.departMinutes)} → ${hm(itin.arriveMinutes)}  (${itin.arriveMinutes - itin.departMinutes} min)",
-                summary(itin)) {
-                dlg?.dismiss()
-                currentItinerary = itin; mode = Mode.NAVIGATE; lastItinerary = itin
-                updateMapForMode(); refreshView(); confirmNavigate(itin)
-            })
+        val debug = Settings.debug(this)
+        withPlanning(getString(R.string.nav_planning), { prog ->
+            if (debug) {
+                val cmp = runCatching { Planner.compare(db, allStops, f, t, depart, prog) }.getOrDefault(emptyList())
+                cmp.firstOrNull { it.engine == Engine.RAPTOR }?.itineraries ?: emptyList()
+            } else runCatching { Planner.plan(db, allStops, f, t, depart, Settings.engine(this), prog) }.getOrDefault(emptyList())
+        }) { res ->
+            if (res.isEmpty()) { toast(getString(R.string.planner_none)); return@withPlanning }
+            planOptions.clear(); planOptions.addAll(res.sortedWith(compareBy({ it.departMinutes }, { it.arriveMinutes })))
+            optIdx = 0; pendingItinFit = true
+            setNavState(NavState.OPTIONS)
         }
-        dlg = HcDialog(this).setTitle(R.string.planner_title)
-            .setView(android.widget.ScrollView(this).apply { addView(box) })
-            .setNegativeButton(R.string.close, null).create()
-        dlg.show()
     }
 
-    private fun confirmNavigate(itin: Itinerary) {
-        lastItinerary = itin
-        val b = HcDialog(this).setTitle(R.string.navigate).setMessage(summary(itin))
-            .setPositiveButton(R.string.navigate) { _, _ -> startNavigation(itin, simulate = false) }
-            .setNegativeButton(R.string.close, null)
-        if (Settings.debug(this)) b.setNeutralButton(R.string.simulate) { _, _ -> startNavigation(itin, simulate = true) }
-        b.show()
+    /**
+     * Next / previous option; past the last (first) one, plan again from just after
+     * the last departure (or an hour before the first) to find more.
+     */
+    private fun stepOption(step: Int) {
+        val n = optIdx + step
+        if (n in planOptions.indices) { optIdx = n; pendingItinFit = true; setNavState(NavState.OPTIONS); return }
+        val f = from; val t = to; val db = DbManager.db ?: return
+        if (f == null || t == null || planOptions.isEmpty()) return
+        val date = planOptions.first().serviceDate
+        val later = step > 0
+        val at = if (later) Malta.at(date, planOptions.last().departMinutes + 1)
+                 else Malta.at(date, planOptions.first().departMinutes - 60)
+        withPlanning(getString(if (later) R.string.cd_next_option else R.string.cd_prev_option), { prog ->
+            runCatching { Planner.plan(db, allStops, f, t, at, Settings.engine(this), prog) }.getOrDefault(emptyList())
+        }) { res ->
+            val known = planOptions.map { it.depart to it.arrive }.toSet()
+            val fresh = res.filter { (it.depart to it.arrive) !in known }.filter {
+                if (later) it.depart > planOptions.last().depart else it.depart < planOptions.first().depart
+            }
+            if (fresh.isEmpty()) { toast(getString(if (later) R.string.nav_no_later else R.string.nav_no_earlier)); return@withPlanning }
+            val cur = planOptions.getOrNull(optIdx)
+            planOptions.addAll(fresh); planOptions.sortWith(compareBy({ it.departMinutes }, { it.arriveMinutes }))
+            optIdx = (planOptions.indexOf(cur) + step).coerceIn(0, planOptions.size - 1)
+            pendingItinFit = true
+            setNavState(NavState.OPTIONS)
+        }
     }
 
     private fun statsText(cmp: List<EngineResult>): String {
@@ -1523,8 +1636,11 @@ class MainActivity : Activity(), LocationListener {
     // ---------------- navigation
     private fun startNavigation(itin: Itinerary, simulate: Boolean) {
         if (!simulate && !ensureLocation()) { toast("Location permission needed"); return }
-        lastItinerary = itin
+        lastItinerary = itin; currentItinerary = itin; navState = NavState.SELECTED
         NavHub.itinerary = itin
+        NavHub.to = to ?: itin.legs.lastOrNull()?.let { l ->
+            (l as? WalkLeg)?.let { Place(it.toName, it.toLat, it.toLon) }
+        }
         if (NavHub.stops.isEmpty()) NavHub.stops = allStops.associateBy { it.number }
         NavHub.simulate = simulate
         NavHub.simPoints = if (simulate) buildSimPoints(itin) else emptyList()
@@ -1533,11 +1649,16 @@ class MainActivity : Activity(), LocationListener {
             NavHub.simPoints.firstOrNull()?.let { map.setMyLocation(it[0], it[1], 5f, it[2].toFloat()); map.centerOnMe() }
         }
         startForegroundService(Intent(this, NavigationService::class.java))
+        // interactive: the map follows you
+        if (!simulate) map.centerOnMe()
         render()
     }
 
+    /** Stop interactive navigation; the selected journey stays (you can go again or pick another). */
     private fun cancelNav() {
-        stopService(Intent(this, NavigationService::class.java)); NavHub.clear(); render()
+        stopService(Intent(this, NavigationService::class.java)); NavHub.clear()
+        navState = if (currentItinerary != null) NavState.SELECTED else NavState.INPUT
+        updateMapForMode(); refreshView(); render()
     }
 
     /** Debug: synthesize a GPS path along the itinerary (walk legs straight, bus
@@ -1666,6 +1787,18 @@ class MainActivity : Activity(), LocationListener {
     // ---------------- bottom panel
     private fun render() {
         val n = NavHub.snapshot
+        // re-planned while navigating: show the new journey
+        NavHub.itinerary?.let { ni ->
+            if (n.active && ni !== currentItinerary) {
+                currentItinerary = ni; lastItinerary = ni
+                if (mode == Mode.NAVIGATE) { updateMapForMode(); if (viewKind == ViewKind.TEXT) buildTextPanel() }
+            }
+        }
+        // a message from navigation (e.g. after "the bus left without me"): show it once
+        if (n.messageId > shownMsgId && n.message.isNotEmpty()) {
+            shownMsgId = n.messageId
+            HcDialog(this).setMessage(n.message).setPositiveButton(android.R.string.ok, null).show()
+        }
         if (n.simulated && n.lat != null && n.lon != null) {
             myLat = n.lat; myLon = n.lon
             n.bearing?.let { setCourse(it) }
@@ -1675,7 +1808,8 @@ class MainActivity : Activity(), LocationListener {
             panel.visibility = View.VISIBLE
             status.text = if (n.arrived) "" else "${n.distanceM} m"
             nextStop.text = n.instruction; nextStop.visibility = View.VISIBLE
-            destination.text = getString(R.string.nav_cancel); destination.visibility = View.VISIBLE
+            destination.text = if (n.arrived) getString(R.string.nav_cancel) else ""
+            destination.visibility = if (n.arrived) View.VISIBLE else View.GONE
             alert.text = if (n.pressStop) getString(R.string.press_stop) else n.detail
             alert.visibility = if (n.pressStop || n.detail.isNotEmpty()) View.VISIBLE else View.GONE
         } else {
